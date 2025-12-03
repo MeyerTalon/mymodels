@@ -1,0 +1,28 @@
+# Model configuration
+model_name: wikipedia_small
+number_of_articles: 10
+use_local_articles: False
+
+# Model architecture
+d_model: 512
+n_heads: 8
+n_layers: 6
+d_ff: 2048
+max_seq_len: 512
+dropout: 0.1
+
+# Training configuration
+num_epochs: 10
+batch_size: 32
+learning_rate: 0.0001
+weight_decay: 0.01
+min_lr: 0.000001
+max_grad_norm: 1.0
+save_every: 1
+
+# Data configuration
+data_dir: wikipedia/data
+num_workers: 0
+
+# Weights directory
+weights_dir: wikipedia/weights
