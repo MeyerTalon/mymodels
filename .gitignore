@@ -210,3 +210,7 @@ __marimo__/
 wikipedia/data/
 wikipedia/weights/
 wikipedia/tokenizer_files/
+
+# macOS
+.DS_Store
+**/.DS_Store
