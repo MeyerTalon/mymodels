@@ -1,9 +1,9 @@
-# Model configuration
+# model configuration
 model_name: wikipedia_medium
 number_of_articles: 10000
 use_local_articles: True
 
-# Model architecture
+# model architecture
 d_model: 1024
 n_heads: 16
 n_layers: 16
@@ -11,7 +11,7 @@ d_ff: 4096
 max_seq_len: 512
 dropout: 0.1
 
-# Training configuration
+# training configuration
 num_epochs: 10
 batch_size: 4
 learning_rate: 0.0001
@@ -20,12 +20,9 @@ min_lr: 0.000001
 max_grad_norm: 1.0
 save_every: 1
 
-# Data configuration
+# data configuration
 data_dir: wikipedia/data
-num_workers: 4        # Use a few workers to speed up loading many articles
+num_workers: 4        # use a few workers to speed up loading many articles
 
-# Weights directory
+# weights directory
 weights_dir: wikipedia/weights
-
-
-

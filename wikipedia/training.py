@@ -1,13 +1,13 @@
-"""Training pipeline for the decoder-only transformer model.
+"""training pipeline for the decoder-only transformer model.
 
-Provides the Trainer class which handles the complete training workflow: loading
+provides the Trainer class which handles the complete training workflow: loading
 configuration, setting up data loaders, running training loops, and saving checkpoints.
-Can be run as a standalone script with a config file path.
+can be run as a standalone script with a config file path.
 """
 
 import os
 import sys
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 import torch
 import torch.nn as nn
@@ -16,65 +16,53 @@ from torch.optim import Adam
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from tqdm import tqdm
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# allow running as a script from the repo root: python wikipedia/training.py
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from architecture import DecoderOnlyTransformer
-from data import create_dataloader
-from tokenizer import WikipediaBPETokenizer
+from wikipedia.architecture import DecoderOnlyTransformer
+from wikipedia.data import create_dataloader
+from wikipedia.tokenizer import WikipediaBPETokenizer
+from wikipedia.utils import TOKENIZER_DIR, resolve_repo_path, select_device
 
 
 class Trainer:
-    """Training class for the decoder-only transformer."""
+    """training class for the decoder-only transformer."""
 
     def __init__(self, config_path: str) -> None:
-        """Initializes the trainer from a YAML configuration file.
+        """initializes the trainer from a YAML configuration file.
 
         Args:
-            config_path: Path to the YAML configuration file.
+            config_path: path to the YAML configuration file.
         """
-        # Load configuration
+        # load configuration
         with open(config_path, "r", encoding="utf-8") as f:
             self.config: Dict[str, Any] = yaml.safe_load(f)
 
-        # Set device: prefer Apple Silicon (MPS), then CUDA, then CPU
-        if torch.backends.mps.is_available():
-            self.device = torch.device("mps")
-        elif torch.cuda.is_available():
-            self.device = torch.device("cuda")
-        else:
-            self.device = torch.device("cpu")
+        self.device = select_device()
         print(f"Using device: {self.device}")
 
-        # Setup pipeline (data + tokenizer)
+        # setup pipeline (data + tokenizer)
         self._setup_data()
         self._setup_model()
         self._setup_optimizer()
 
-        # Training state
+        # training state
         self.current_epoch: int = 0
         self.best_loss: float = float("inf")
 
     def _setup_data(self) -> None:
-        """Sets up the data loader and tokenizer."""
-        data_dir = self.config.get("data_dir", "wikipedia/data")
+        """sets up the data loader and tokenizer."""
+        data_dir = resolve_repo_path(self.config.get("data_dir", "wikipedia/data"))
         n_articles = self.config.get("number_of_articles", 5)
         use_local = self.config.get("use_local_articles", False)
 
-        # Make path absolute if relative
-        if not os.path.isabs(data_dir):
-            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            data_dir = os.path.join(base_dir, data_dir)
-
-        # Train or load ByteLevel BPE tokenizer based on the article texts
-        tokenizer_dir = os.path.join(
-            os.path.dirname(os.path.abspath(__file__)), "tokenizer_files"
-        )
+        # train or load ByteLevel BPE tokenizer based on the article texts
         self.tokenizer = WikipediaBPETokenizer.train_or_load(
             data_dir=data_dir,
-            tokenizer_dir=tokenizer_dir,
+            tokenizer_dir=TOKENIZER_DIR,
         )
 
-        # Create DataLoader (handles downloading n_articles internally)
+        # create DataLoader (handles downloading n_articles internally)
         self.dataloader = create_dataloader(
             data_dir=data_dir,
             tokenizer=self.tokenizer,
@@ -89,7 +77,7 @@ class Trainer:
         print(f"DataLoader created with {len(self.dataloader)} batches")
 
     def _setup_model(self) -> None:
-        """Initializes the transformer model based on configuration."""
+        """initializes the transformer model based on configuration."""
         vocab_size = self.tokenizer.vocab_size
 
         self.model = DecoderOnlyTransformer(
@@ -112,7 +100,7 @@ class Trainer:
         )
 
     def _setup_optimizer(self) -> None:
-        """Sets up the optimizer, scheduler, and loss function."""
+        """sets up the optimizer, scheduler, and loss function."""
         self.optimizer = Adam(
             self.model.parameters(),
             lr=self.config.get("learning_rate", 1e-4),
@@ -125,14 +113,14 @@ class Trainer:
             eta_min=self.config.get("min_lr", 1e-6),
         )
 
-        # Ignore padding tokens (id=0) in the loss
+        # ignore padding tokens (id=0) in the loss
         self.criterion = nn.CrossEntropyLoss(ignore_index=0)
 
     def train_epoch(self) -> float:
-        """Trains the model for a single epoch.
+        """trains the model for a single epoch.
 
         Returns:
-            Average training loss over the epoch.
+            average training loss over the epoch.
         """
         self.model.train()
         total_loss: float = 0.0
@@ -143,21 +131,21 @@ class Trainer:
             input_ids = input_ids.to(self.device)
             target_ids = target_ids.to(self.device)
 
-            # Forward pass
+            # forward pass
             self.optimizer.zero_grad()
             logits = self.model(input_ids)
 
-            # Reshape for loss calculation
+            # reshape for loss calculation
             logits = logits.view(-1, logits.size(-1))
             target_ids = target_ids.view(-1)
 
-            # Calculate loss
+            # calculate loss
             loss = self.criterion(logits, target_ids)
 
-            # Backward pass
+            # backward pass
             loss.backward()
 
-            # Gradient clipping
+            # gradient clipping
             torch.nn.utils.clip_grad_norm_(
                 self.model.parameters(),
                 self.config.get("max_grad_norm", 1.0),
@@ -174,20 +162,16 @@ class Trainer:
         return avg_loss
 
     def save_checkpoint(self, epoch: int, loss: float, is_best: bool = False) -> None:
-        """Saves a model checkpoint to disk.
+        """saves a model checkpoint to disk.
 
         Args:
-            epoch: Current epoch number (1-based).
-            loss: Average loss for the epoch.
-            is_best: Whether this checkpoint is the best so far.
+            epoch: current epoch number (1-based).
+            loss: average loss for the epoch.
+            is_best: whether this checkpoint is the best so far.
         """
-        weights_dir = self.config.get("weights_dir", "wikipedia/weights")
-
-        # Make path absolute if relative
-        if not os.path.isabs(weights_dir):
-            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            weights_dir = os.path.join(base_dir, weights_dir)
-
+        weights_dir = resolve_repo_path(
+            self.config.get("weights_dir", "wikipedia/weights")
+        )
         os.makedirs(weights_dir, exist_ok=True)
 
         model_name = self.config.get("model_name", "model")
@@ -202,22 +186,22 @@ class Trainer:
             "tokenizer_vocab_size": self.tokenizer.vocab_size,
         }
 
-        # Save latest checkpoint
+        # save latest checkpoint
         checkpoint_path = os.path.join(weights_dir, f"{model_name}_latest.pt")
         torch.save(checkpoint, checkpoint_path)
 
-        # Save best checkpoint
+        # save best checkpoint
         if is_best:
             best_path = os.path.join(weights_dir, f"{model_name}_best.pt")
             torch.save(checkpoint, best_path)
             print(f"Saved best model to {best_path}")
 
-        # Save epoch-specific checkpoint
+        # save epoch-specific checkpoint
         epoch_path = os.path.join(weights_dir, f"{model_name}_epoch_{epoch}.pt")
         torch.save(checkpoint, epoch_path)
 
     def train(self) -> None:
-        """Runs the full training loop over all epochs."""
+        """runs the full training loop over all epochs."""
         num_epochs = self.config.get("num_epochs", 10)
         save_every = self.config.get("save_every", 1)
 
@@ -226,10 +210,10 @@ class Trainer:
         for epoch in range(num_epochs):
             self.current_epoch = epoch
 
-            # Train one epoch
+            # train one epoch
             avg_loss = self.train_epoch()
 
-            # Update learning rate
+            # update learning rate
             self.scheduler.step()
 
             print(
