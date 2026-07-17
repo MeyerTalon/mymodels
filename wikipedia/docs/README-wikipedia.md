@@ -78,7 +78,7 @@ Training pipeline and Trainer class:
 
 **Usage (from repo root):**
 ```bash
-python wikipedia/training.py wikipedia/configs/wikipedia_small.yaml
+uv run python -m wikipedia.training wikipedia/configs/wikipedia_small.yaml
 ```
 
 **Features:**
@@ -98,7 +98,7 @@ Command-line interface for text generation:
 
 **Usage (from repo root):**
 ```bash
-python wikipedia/inference.py --model_name wikipedia_small --prompt "The capital of Mexico is"
+uv run python -m wikipedia.inference --model_name wikipedia_small --prompt "The capital of Mexico is"
 ```
 
 **Options:**
@@ -121,7 +121,7 @@ Shared helpers used by the training and inference entry points:
 Lightweight `pytest` tests for the critical functions (tiny model dims, no network, no real weights). Run from the repo root:
 
 ```bash
-pytest wikipedia/tests
+uv run pytest wikipedia/tests
 ```
 
 ### `configs/wikipedia_small.yaml`, `configs/wikipedia_medium.yaml`
@@ -159,13 +159,14 @@ Configuration files defining model and training parameters:
 
 ### Installation
 
-1. Create and activate the conda environment from the repo root:
+1. Install uv, then create the project environment from the repo root:
 ```bash
-conda env create -f environment.yaml
-conda activate mymodels
+curl -LsSf https://astral.sh/uv/install.sh | sh
+uv sync
 ```
 
-2. Ensure you're in the project root directory when running scripts.
+2. Run all commands from the project root. `uv run` automatically uses and
+   synchronizes the project `.venv`; activation is not required.
 
 ## Usage
 
@@ -184,7 +185,7 @@ batch_size: 16
 
 2. Run training (from repo root):
 ```bash
-python wikipedia/training.py wikipedia/configs/wikipedia_small.yaml
+uv run python -m wikipedia.training wikipedia/configs/wikipedia_small.yaml
 ```
 
 The script will:
@@ -204,7 +205,7 @@ The script will:
 After training, generate text completions:
 
 ```bash
-python wikipedia/inference.py \
+uv run python -m wikipedia.inference \
     --model_name wikipedia_small \
     --prompt "The history of artificial intelligence" \
     --max_length 200 \

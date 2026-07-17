@@ -16,9 +16,6 @@ from torch.optim import Adam
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from tqdm import tqdm
 
-# allow running as a script from the repo root: python wikipedia/training.py
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 from wikipedia.architecture import DecoderOnlyTransformer
 from wikipedia.data import create_dataloader
 from wikipedia.tokenizer import WikipediaBPETokenizer
@@ -235,7 +232,7 @@ class Trainer:
 def main() -> None:
     """CLI entry point for training with a YAML configuration file."""
     if len(sys.argv) < 2:
-        print("Usage: python training.py <config_path>")
+        print('usage: uv run python -m wikipedia.training <config_path>')
         sys.exit(1)
 
     config_path = sys.argv[1]

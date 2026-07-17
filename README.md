@@ -5,43 +5,56 @@ models of mine
 
 run these commands from the repository root:
 
-### conda environment
+### uv environment
 
 ```bash
-# first time: create env and install all packages from environment.yaml
-conda env create -f environment.yaml
+# install uv
+curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
 ```bash
-# if the env already exists: sync installed packages to environment.yaml
-conda env update -f environment.yaml --prune
+# create or update .venv from the lockfile
+uv sync
 ```
 
 ```bash
-# activate conda environment :)
-conda activate mymodels
+# add or remove runtime dependencies
+uv add <package>
+uv remove <package>
+```
+
+```bash
+# add or remove development dependencies
+uv add --dev <package>
+uv remove --dev <package>
+```
+
+```bash
+# upgrade all locked dependencies
+uv lock --upgrade
+uv sync
 ```
 
 ### tests
 
 ```bash
 # run all tests
-pytest
+uv run pytest
 ```
 
 ```bash
 # run only the wikipedia tests
-pytest wikipedia/tests
+uv run pytest wikipedia/tests
 ```
 
 ### wikipedia model
 
 ```bash
 # train the wikipedia model
-python wikipedia/training.py wikipedia/configs/wikipedia_small.yaml
+uv run python -m wikipedia.training wikipedia/configs/wikipedia_small.yaml
 ```
 
 ```bash
 # generate text with trained weights
-python wikipedia/inference.py --model_name wikipedia_small --prompt "the history of"
+uv run python -m wikipedia.inference --model_name wikipedia_small --prompt "the history of"
 ```

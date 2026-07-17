@@ -4,7 +4,10 @@ Personal PyTorch models repo. One self-contained model package per top-level dir
 
 ## Environment
 
-- Conda env `mymodels` from `environment.yaml` (Python 3.10, torch 2.9.1): `conda activate mymodels`
+- Python 3.11 and dependencies are managed by uv from `pyproject.toml`, `.python-version`, and the committed `uv.lock`
+- Run `uv sync` from the repo root to create or update `.venv`; do not activate it or install packages with pip/conda
+- Use `uv add <package>` for runtime dependencies, `uv add --dev <package>` for development dependencies, and the corresponding `uv remove` commands
+- Run Python tools and scripts through `uv run`; uv automatically keeps the environment synchronized
 - Runs on consumer hardware; device is auto-selected MPS → CUDA → CPU
 - Run all commands from the repo root — scripts default to repo-root-relative paths like `wikipedia/weights`
 
@@ -12,10 +15,10 @@ Personal PyTorch models repo. One self-contained model package per top-level dir
 
 ```bash
 # train (downloads random Wikipedia articles unless the config sets use_local_articles — needs network)
-python wikipedia/training.py wikipedia/configs/wikipedia_small.yaml
+uv run python -m wikipedia.training wikipedia/configs/wikipedia_small.yaml
 
 # infer
-python wikipedia/inference.py --model_name wikipedia_small --prompt "The history of"
+uv run python -m wikipedia.inference --model_name wikipedia_small --prompt "The history of"
 # optional: --max_length --temperature --top_k --weights_dir
 ```
 
@@ -34,7 +37,7 @@ python wikipedia/inference.py --model_name wikipedia_small --prompt "The history
 
 ## Verification
 
-There is no linter config. Critical functions get lightweight `pytest` tests in `<pkg>/tests/` (see the `python-coding` skill); run them with `pytest wikipedia/tests` (or `pytest` for everything) from the repo root. Also verify changes by exercising them: a short training run (edit `num_epochs` / `number_of_articles` in a config copy, set `use_local_articles: True` to reuse downloaded data) and an inference call against existing weights.
+There is no linter config. Critical functions get lightweight `pytest` tests in `<pkg>/tests/` (see the `python-coding` skill); run them with `uv run pytest wikipedia/tests` (or `uv run pytest` for everything) from the repo root. Also verify changes by exercising them: a short training run (edit `num_epochs` / `number_of_articles` in a config copy, set `use_local_articles: True` to reuse downloaded data) and an inference call against existing weights.
 
 ## Do not
 
