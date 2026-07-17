@@ -11,9 +11,6 @@ from typing import Optional, Tuple
 
 import torch
 
-# allow running as a script from the repo root: python wikipedia/inference.py
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 from wikipedia.architecture import DecoderOnlyTransformer
 from wikipedia.tokenizer import WikipediaBPETokenizer
 from wikipedia.utils import TOKENIZER_DIR, resolve_repo_path, select_device
