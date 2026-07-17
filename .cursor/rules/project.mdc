@@ -1,0 +1,10 @@
+---
+description: Follow repo agent conventions from AGENTS.md
+alwaysApply: true
+---
+
+# Project
+
+- Follow [AGENTS.md](mdc:AGENTS.md) for env, commands, and conventions.
+- Prefer existing `wikipedia/` patterns when adding models or scripts.
+- Keep changes scoped to what was asked.
