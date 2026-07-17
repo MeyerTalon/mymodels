@@ -17,11 +17,11 @@ Counts include weight-tied token embeddings and output projection. See the first
 
 ## Folder structure
 
-This README describes the `wikipedia/` model package. Per-model docs live in the repo-root `docs/` directory (`README-<pkg>.md`).
+This README describes the `wikipedia/` model package. Per-model docs live in the repo-root `docs/` directory (`<pkg>.md`).
 
 ```
 docs/
-└── README-wikipedia.md    # This file
+└── wikipedia.md           # This file
 
 wikipedia/
 ├── __init__.py            # Marks this directory as a Python package
@@ -30,12 +30,14 @@ wikipedia/
 ├── tokenizer.py           # Byte-level BPE tokenizer wrapper
 ├── training.py            # Training script and Trainer class
 ├── inference.py           # Inference script for text generation
+├── reporting.py           # Per-epoch train/val loss chart generation
 ├── utils.py               # Shared device selection and path resolution
 ├── configs/               # Configuration YAML files
 ├── tests/                 # Lightweight pytest tests
 ├── data/                  # Downloaded Wikipedia articles (gitignored, created automatically)
 ├── tokenizer_files/       # Trained tokenizer vocab/merges (gitignored, created automatically)
-└── weights/               # Saved model checkpoints (gitignored, created automatically)
+├── weights/               # Saved model checkpoints (gitignored, created automatically)
+└── reports/               # Per-run train/val loss charts (gitignored, created automatically)
 ```
 
 ## Files description
@@ -104,6 +106,7 @@ uv run python -m wikipedia.training wikipedia/configs/wikipedia_small.yaml
 - Linear-warmup then cosine-decay learning rate schedule
 - Saves multiple checkpoint types (best model, latest, per-epoch)
 - Progress bars with loss and learning-rate tracking
+- Writes a per-run train/val loss chart after every epoch via `TrainingReporter` (see `wikipedia/reporting.py`)
 
 ### `wikipedia/inference.py`
 
@@ -133,6 +136,19 @@ Shared helpers used by the training and inference entry points:
 - **`select_device()`**: Picks the best available device (MPS, then CUDA, then CPU)
 - **`select_autocast_dtype()`**: Resolves the autocast dtype for a device and precision setting (returns `None` on CPU or for `fp32`)
 - **`resolve_repo_path()`**: Resolves repo-root-relative paths (e.g. `wikipedia/weights`) to absolute paths
+
+### `wikipedia/reporting.py`
+
+Per-run training report generation:
+
+- **`TrainingReporter`**: Accumulates per-epoch train and validation loss and renders them as a single line chart. It is re-rendered after every epoch, so a partially trained (or interrupted) run always has an up-to-date chart.
+
+**Key Features:**
+- Train and validation loss are drawn on the **same axes** for direct comparison (train as blue circles, validation as red squares)
+- One integer x-tick and vertical gridline per epoch, so it is clear where each epoch starts and ends
+- The best (lowest) validation-loss epoch is annotated on the chart
+- Uses the headless `Agg` backend, so it works during background/headless training with no display
+- Each run writes to its own timestamped directory: `<reports_dir>/<model_name>_<date>_<time>/report.png`
 
 ### `wikipedia/tests/`
 
@@ -181,6 +197,7 @@ Configuration files defining model and training parameters:
 **Paths:**
 - `model_name`: Name for saved checkpoints
 - `weights_dir`: Directory to save model weights (default: wikipedia/weights)
+- `reports_dir`: Base directory for per-run loss charts, written to `<reports_dir>/<model_name>_<date>_<time>/report.png` (default: wikipedia/reports)
 
 ## Setup
 
@@ -221,11 +238,15 @@ The script will:
 - Create the model according to config
 - Train for the specified number of epochs
 - Save checkpoints to `wikipedia/weights/`
+- Write a train/val loss chart to `wikipedia/reports/{model_name}_{date}_{time}/report.png`, refreshed after every epoch
 
 **Checkpoint Files:**
 - `{model_name}_best.pt`: Best model (lowest loss)
 - `{model_name}_latest.pt`: Most recent checkpoint
 - `{model_name}_epoch_{N}.pt`: Checkpoint at epoch N
+
+**Report Files:**
+- `{model_name}_{date}_{time}/report.png`: Train and validation loss on a single chart, one point per epoch
 
 ### Running Inference
 
@@ -282,7 +303,7 @@ Wikipedia articles are downloaded and saved as plain text files in `wikipedia/da
 1. **Start Small**: Begin with a small model (e.g., `d_model=256`, `n_layers=4`) and few articles to test the pipeline
 2. **Monitor Training**: Watch the loss decrease - if it plateaus, try adjusting learning rate or model size
 3. **Data Quality**: More articles generally lead to better results, but require more training time
-4. **Memory**: Larger models and longer sequences require more memory. On Apple silicon, keep `precision: fp16` and raise the effective batch with `grad_accum_steps` rather than a larger `batch_size` if you hit the unified-memory ceiling
+4. **Memory**: Larger models and longer sequences require more memory. On Apple silicon, prefer `precision: bf16` (fp16 has no gradient scaler on MPS and can diverge) and raise the effective batch with `grad_accum_steps` rather than a larger `batch_size` if you hit the unified-memory ceiling
 5. **Checkpoints**: The training script saves multiple checkpoint types - use `_best.pt` for inference
 
 ## Troubleshooting

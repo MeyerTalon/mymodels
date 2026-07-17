@@ -50,7 +50,7 @@ uv run pytest wikipedia/tests
 
 ### wikipedia model
 
-see [docs/README-wikipedia.md](docs/README-wikipedia.md) for architecture, configs, and usage details.
+see [docs/wikipedia.md](docs/wikipedia.md) for architecture, configs, and usage details.
 
 ```bash
 # train the wikipedia model

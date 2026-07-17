@@ -21,6 +21,7 @@ from tqdm import tqdm
 
 from wikipedia.architecture import DecoderOnlyTransformer
 from wikipedia.data import create_dataloaders
+from wikipedia.reporting import TrainingReporter
 from wikipedia.tokenizer import WikipediaBPETokenizer
 from wikipedia.utils import (
     TOKENIZER_DIR,
@@ -67,6 +68,15 @@ class Trainer:
 
         self.current_epoch: int = 0
         self.best_loss: float = float("inf")
+
+        # per-run loss report, refreshed after every epoch.
+        reports_dir = resolve_repo_path(
+            self.config.get("reports_dir", "wikipedia/reports")
+        )
+        self.reporter = TrainingReporter(
+            model_name=self.config.get("model_name", "model"),
+            reports_dir=reports_dir,
+        )
 
     def _setup_data(self) -> None:
         """sets up the tokenizer and packed train/validation dataloaders."""
@@ -301,6 +311,8 @@ class Trainer:
                 f"- Perplexity: {math.exp(min(monitored, 20)):.2f}"
             )
 
+            self.reporter.log_epoch(epoch + 1, train_loss, val_loss)
+
             is_best = monitored < self.best_loss
             if is_best:
                 self.best_loss = monitored
@@ -310,6 +322,7 @@ class Trainer:
 
         print("Training completed!")
         print(f"Best loss: {self.best_loss:.4f}")
+        print(f"Loss report saved to {self.reporter.report_path}")
 
 
 def main() -> None:
