@@ -1,8 +1,9 @@
 """data loading and Wikipedia article downloading module.
 
-handles downloading random Wikipedia articles via the HTTP API and creating PyTorch
-Dataset and DataLoader instances for training. includes utilities for filename
-sanitization and text extraction.
+handles downloading random Wikipedia articles via the HTTP API and building the
+packed, contiguous token stream used for causal language modeling. articles are
+tokenized once, joined with an end-of-text separator, and split into fixed-length
+blocks so every token contributes a training signal (no padding waste).
 """
 
 import os
@@ -17,52 +18,59 @@ import requests
 import torch
 from torch.utils.data import DataLoader, Dataset
 
+# separator between the metadata header and the article body written by the
+# downloader (a line of '=' characters).
+_HEADER_SEPARATOR = "=" * 80
+
 
 class WikipediaDataset(Dataset):
-    """dataset of tokenized Wikipedia articles for language modeling."""
+    """packed fixed-length blocks over a single token stream.
 
-    def __init__(self, texts: List[str], tokenizer: Any, max_length: int = 512) -> None:
-        """initializes the dataset.
+    the full corpus is tokenized into one contiguous stream and cut into
+    ``block_size``-length windows. each item is a ``(input_ids, target_ids)``
+    pair where ``target_ids`` is ``input_ids`` shifted by one, the standard
+    next-token-prediction setup with no padding.
+    """
+
+    def __init__(self, token_ids: List[int], block_size: int = 512) -> None:
+        """initializes the dataset from a flat token stream.
 
         Args:
-            texts: list of raw article texts.
-            tokenizer: tokenizer with an ``encode(str) -> List[int]`` method.
-            max_length: maximum sequence length (including target token).
+            token_ids: contiguous list of token ids spanning the whole corpus.
+            block_size: sequence length of each training block.
+
+        Raises:
+            ValueError: if the stream is too short to form a single block.
         """
-        self.texts = texts
-        self.tokenizer = tokenizer
-        self.max_length = max_length
+        if len(token_ids) < block_size + 1:
+            raise ValueError(
+                f"token stream of length {len(token_ids)} is too short for "
+                f"block_size={block_size}; need at least {block_size + 1} tokens."
+            )
+        self.block_size = block_size
+        self.data = torch.tensor(token_ids, dtype=torch.long)
+        # number of full (block_size + 1)-length windows available
+        self.n_blocks = (len(self.data) - 1) // block_size
 
     def __len__(self) -> int:
-        """returns the number of articles."""
-        return len(self.texts)
+        """returns the number of packed blocks."""
+        return self.n_blocks
 
     def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
-        """returns a single (input_ids, target_ids) pair.
+        """returns the ``(input_ids, target_ids)`` pair for block ``idx``.
 
         Args:
-            idx: index of the article.
+            idx: block index.
 
         Returns:
             a tuple of:
 
-            * input_ids: tensor of token ids of shape (seq_len - 1,).
-            * target_ids: tensor of next-token labels of shape (seq_len - 1,).
+            * input_ids: tensor of token ids of shape (block_size,).
+            * target_ids: next-token labels of shape (block_size,).
         """
-        text = self.texts[idx]
-        tokens = self.tokenizer.encode(text)
-
-        # truncate or pad to max_length
-        if len(tokens) > self.max_length:
-            tokens = tokens[: self.max_length]
-        else:
-            tokens = tokens + [0] * (self.max_length - len(tokens))
-
-        # create input and target (shifted by 1 for next token prediction)
-        input_ids = torch.tensor(tokens[:-1], dtype=torch.long)
-        target_ids = torch.tensor(tokens[1:], dtype=torch.long)
-
-        return input_ids, target_ids
+        start = idx * self.block_size
+        chunk = self.data[start : start + self.block_size + 1]
+        return chunk[:-1], chunk[1:]
 
 
 def sanitize_filename(title: str) -> str:
@@ -81,6 +89,27 @@ def sanitize_filename(title: str) -> str:
     title = re.sub(r"[^a-z0-9]+", "_", title)
     title = title.strip("_")
     return title
+
+
+def extract_article_text(raw: str) -> str:
+    """strips the downloader metadata header from a raw article file.
+
+    downloaded files start with ``Title:``/``URL:`` lines followed by a line of
+    ``=`` characters and a blank line; only the body after that separator is
+    useful for language modeling. files without the header are returned as-is.
+
+    Args:
+        raw: full contents of an article ``.txt`` file.
+
+    Returns:
+        the article body with surrounding whitespace stripped.
+    """
+    marker_index = raw.find(_HEADER_SEPARATOR)
+    if marker_index != -1:
+        newline_index = raw.find("\n", marker_index)
+        if newline_index != -1:
+            return raw[newline_index + 1 :].strip()
+    return raw.strip()
 
 
 def download_wikipedia_articles(
@@ -184,11 +213,10 @@ def _download_single_article(
         with open(filepath, "w", encoding="utf-8") as f:
             f.write(f"Title: {page_title}\n")
             f.write(f"URL: https://en.wikipedia.org/?curid={page_id}\n")
-            f.write("=" * 80 + "\n\n")
+            f.write(_HEADER_SEPARATOR + "\n\n")
             f.write(article_text)
 
         print(f"[{index + 1}] Downloaded: {page_title}")
-        print(f"         Saved to: {filepath}")
 
         # optional per-worker delay
         if delay > 0:
@@ -205,60 +233,50 @@ def _download_single_article(
 
 
 def load_articles_from_dir(data_dir: str) -> List[str]:
-    """loads all article texts from a directory.
+    """loads and cleans all article bodies from a directory.
+
+    the metadata header is stripped from each file so only the article text is
+    returned.
 
     Args:
         data_dir: directory containing ``.txt`` article files.
 
     Returns:
-        list of article contents as strings.
+        list of cleaned article bodies as strings.
     """
     texts: List[str] = []
-    for filename in os.listdir(data_dir):
+    for filename in sorted(os.listdir(data_dir)):
         if filename.endswith(".txt"):
             filepath = os.path.join(data_dir, filename)
             with open(filepath, "r", encoding="utf-8") as f:
-                texts.append(f.read())
+                body = extract_article_text(f.read())
+            if body:
+                texts.append(body)
     return texts
 
 
-def create_dataloader(
+def gather_texts(
     data_dir: str,
-    tokenizer: Any,
     n_articles: int,
-    batch_size: int = 32,
-    max_length: int = 512,
-    shuffle: bool = True,
-    num_workers: int = 0,
-    use_local_articles: bool = False,
-) -> DataLoader:
-    """creates a DataLoader over Wikipedia articles.
-
-    this function will download ``n_articles`` random Wikipedia pages into the
-    specified directory and then build a ``WikipediaDataset`` and
-    ``DataLoader`` from the downloaded texts.
+    use_local_articles: bool,
+) -> List[str]:
+    """collects cleaned article texts, downloading them if requested.
 
     Args:
-        data_dir: directory where article text files will be stored or read from.
-        tokenizer: tokenizer instance used to encode the text.
+        data_dir: directory where article text files are stored or read from.
         n_articles: number of articles to download or sample.
-        batch_size: batch size for the loader.
-        max_length: maximum token sequence length.
-        shuffle: whether to shuffle the dataset.
-        num_workers: number of subprocesses for data loading.
-        use_local_articles: when True, only use already downloaded local
-            articles and randomly sample up to ``n_articles`` of them.
+        use_local_articles: when True, sample from already-downloaded articles
+            instead of hitting the network.
 
     Returns:
-        a configured ``torch.utils.data.DataLoader`` instance.
+        list of cleaned article bodies.
+
+    Raises:
+        ValueError: if no readable article texts are available.
     """
-    # ensure directory exists
     os.makedirs(data_dir, exist_ok=True)
 
-    texts: List[str] = []
-
     if use_local_articles:
-        # use only locally available articles
         all_texts = load_articles_from_dir(data_dir)
         if not all_texts:
             raise ValueError(
@@ -266,46 +284,105 @@ def create_dataloader(
                 f"{data_dir}. Please download articles first."
             )
         if len(all_texts) > n_articles:
-            texts = random.sample(all_texts, n_articles)
-        else:
-            texts = all_texts
-    else:
-        # download fresh set of articles. in some environments (e.g., no network),
-        # this may fail and return an empty list.
-        downloaded = download_wikipedia_articles(n_articles, save_dir=data_dir)
+            return random.sample(all_texts, n_articles)
+        return all_texts
 
-        if downloaded:
-            # prefer texts from the files we just downloaded
-            for _, filepath in downloaded:
-                try:
-                    with open(filepath, "r", encoding="utf-8") as f:
-                        texts.append(f.read())
-                except OSError:
-                    continue
+    # download a fresh set; fall back to any local files if the network fails
+    download_wikipedia_articles(n_articles, save_dir=data_dir)
+    texts = load_articles_from_dir(data_dir)
+    if not texts:
+        raise ValueError(
+            "No readable article texts found in "
+            f"{data_dir}. Ensure you have network access or pre-populated .txt files."
+        )
+    return texts
 
-        if not texts:
-            # fallback: use whatever .txt files already exist in the directory
-            print(
-                "Warning: failed to download new Wikipedia articles, "
-                f"falling back to any existing .txt files in {data_dir}"
-            )
-            texts = load_articles_from_dir(data_dir)
 
-        if not texts:
-            raise ValueError(
-                "No readable article texts found in "
-                f"{data_dir}. Ensure you have network access or pre-populated .txt files."
-            )
+def build_token_stream(texts: List[str], tokenizer: Any) -> List[int]:
+    """tokenizes and concatenates texts into one stream separated by eos.
 
-    dataset = WikipediaDataset(texts, tokenizer, max_length=max_length)
+    each article is followed by the tokenizer's end-of-sequence id so the model
+    learns document boundaries. the id falls back to 0 when the tokenizer does
+    not expose ``eos_id``.
 
-    dataloader = DataLoader(
+    Args:
+        texts: cleaned article bodies.
+        tokenizer: tokenizer with an ``encode(str) -> List[int]`` method.
+
+    Returns:
+        a flat list of token ids spanning the whole corpus.
+    """
+    eos_id = getattr(tokenizer, "eos_id", 0)
+    stream: List[int] = []
+    for text in texts:
+        stream.extend(tokenizer.encode(text))
+        stream.append(eos_id)
+    return stream
+
+
+def create_dataloaders(
+    data_dir: str,
+    tokenizer: Any,
+    n_articles: int,
+    block_size: int = 512,
+    batch_size: int = 16,
+    val_fraction: float = 0.0,
+    shuffle: bool = True,
+    num_workers: int = 0,
+    use_local_articles: bool = False,
+) -> Tuple[DataLoader, Optional[DataLoader]]:
+    """builds packed train (and optional validation) dataloaders.
+
+    the corpus is tokenized into a single stream and split *at the token level*
+    into a training and validation region, so the two never share blocks.
+
+    Args:
+        data_dir: directory where article text files are stored or read from.
+        tokenizer: tokenizer instance used to encode the text.
+        n_articles: number of articles to download or sample.
+        block_size: sequence length of each packed block.
+        batch_size: batch size for the loaders.
+        val_fraction: fraction of the token stream reserved for validation
+            (``0.0`` disables the validation loader).
+        shuffle: whether to shuffle the training blocks.
+        num_workers: number of subprocesses for data loading.
+        use_local_articles: when True, only use already-downloaded articles.
+
+    Returns:
+        a ``(train_loader, val_loader)`` tuple; ``val_loader`` is ``None`` when
+        ``val_fraction`` is 0 or the stream is too short to split.
+    """
+    texts = gather_texts(data_dir, n_articles, use_local_articles)
+    stream = build_token_stream(texts, tokenizer)
+
+    val_loader: Optional[DataLoader] = None
+    split = int(len(stream) * (1.0 - val_fraction)) if val_fraction > 0 else len(stream)
+
+    train_dataset = WikipediaDataset(stream[:split], block_size=block_size)
+    train_loader = _make_loader(
+        train_dataset, batch_size, shuffle, num_workers
+    )
+
+    if val_fraction > 0 and len(stream) - split >= block_size + 1:
+        val_dataset = WikipediaDataset(stream[split:], block_size=block_size)
+        val_loader = _make_loader(val_dataset, batch_size, False, num_workers)
+
+    return train_loader, val_loader
+
+
+def _make_loader(
+    dataset: Dataset,
+    batch_size: int,
+    shuffle: bool,
+    num_workers: int,
+) -> DataLoader:
+    """creates a DataLoader with sensible cross-platform defaults."""
+    return DataLoader(
         dataset,
         batch_size=batch_size,
         shuffle=shuffle,
         num_workers=num_workers,
         pin_memory=torch.cuda.is_available(),
+        persistent_workers=num_workers > 0,
+        drop_last=shuffle,
     )
-
-    return dataloader
-

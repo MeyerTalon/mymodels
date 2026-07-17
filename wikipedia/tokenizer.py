@@ -21,6 +21,9 @@ class WikipediaBPETokenizer:
     `vocab_size`.
     """
 
+    #: special tokens reserved at the start of the vocabulary, in id order.
+    SPECIAL_TOKENS: List[str] = ["<pad>", "<s>", "</s>", "<unk>"]
+
     def __init__(self, tokenizer: ByteLevelBPETokenizer) -> None:
         """initializes the wrapper.
 
@@ -29,6 +32,18 @@ class WikipediaBPETokenizer:
         """
         self._tokenizer = tokenizer
         self.vocab_size: int = tokenizer.get_vocab_size()
+
+        # resolve special-token ids once; fall back to conventional positions
+        # (<pad>=0, <s>=1, </s>=2, <unk>=3) if the token is not in the vocab.
+        self.pad_id: int = self._special_id("<pad>", 0)
+        self.bos_id: int = self._special_id("<s>", 1)
+        self.eos_id: int = self._special_id("</s>", 2)
+        self.unk_id: int = self._special_id("<unk>", 3)
+
+    def _special_id(self, token: str, default: int) -> int:
+        """returns the id of a special token, or ``default`` if it is absent."""
+        token_id = self._tokenizer.token_to_id(token)
+        return token_id if token_id is not None else default
 
     @classmethod
     def train_or_load(
@@ -69,7 +84,7 @@ class WikipediaBPETokenizer:
             files=files,
             vocab_size=vocab_size,
             min_frequency=min_frequency,
-            special_tokens=["<pad>", "<s>", "</s>", "<unk>"],
+            special_tokens=cls.SPECIAL_TOKENS,
         )
 
         # save model files (vocab.json, merges.txt), then reload for consistency

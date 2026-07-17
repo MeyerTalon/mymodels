@@ -1,4 +1,5 @@
 # mymodels
+
 models of mine
 
 ## essential commands
@@ -49,6 +50,8 @@ uv run pytest wikipedia/tests
 
 ### wikipedia model
 
+see [docs/README-wikipedia.md](docs/README-wikipedia.md) for architecture, configs, and usage details.
+
 ```bash
 # train the wikipedia model
 uv run python -m wikipedia.training wikipedia/configs/wikipedia_small.yaml
@@ -58,3 +61,4 @@ uv run python -m wikipedia.training wikipedia/configs/wikipedia_small.yaml
 # generate text with trained weights
 uv run python -m wikipedia.inference --model_name wikipedia_small --prompt "the history of"
 ```
+
