@@ -1,61 +1,55 @@
-"""Inference script for generating text from trained models.
+"""inference script for generating text from trained models.
 
-Provides a command-line interface for loading trained checkpoints and generating
-text continuations from prompts. Supports configurable sampling parameters (temperature, top-k).
+provides a command-line interface for loading trained checkpoints and generating
+text continuations from prompts. supports configurable sampling parameters (temperature, top-k).
 """
 
 import argparse
 import os
 import sys
-from typing import Tuple, Optional
+from typing import Optional, Tuple
 
 import torch
 
-# Add current directory to path for imports
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# allow running as a script from the repo root: python wikipedia/inference.py
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from architecture import DecoderOnlyTransformer
-from tokenizer import WikipediaBPETokenizer
+from wikipedia.architecture import DecoderOnlyTransformer
+from wikipedia.tokenizer import WikipediaBPETokenizer
+from wikipedia.utils import TOKENIZER_DIR, resolve_repo_path, select_device
 
 
 def load_model(
     model_name: str,
     weights_dir: str = "wikipedia/weights",
     device: Optional[torch.device] = None,
+    tokenizer_dir: str = TOKENIZER_DIR,
 ) -> Tuple[DecoderOnlyTransformer, WikipediaBPETokenizer, torch.device]:
-    """Loads a trained model and tokenizer from a checkpoint.
+    """loads a trained model and tokenizer from a checkpoint.
 
     Args:
-        model_name: Base name of the model checkpoint files.
-        weights_dir: Directory containing model weights.
-        device: Explicit device to load the model on. If ``None``, chooses
-            CUDA if available, otherwise CPU.
+        model_name: base name of the model checkpoint files.
+        weights_dir: directory containing model weights.
+        device: explicit device to load the model on. if ``None``, the best
+            available device is selected (MPS, then CUDA, then CPU).
+        tokenizer_dir: directory containing the trained tokenizer files.
 
     Returns:
-        A tuple ``(model, tokenizer, device)`` where:
+        a tuple ``(model, tokenizer, device)`` where:
 
         * ``model`` is a ``DecoderOnlyTransformer`` in evaluation mode.
-        * ``tokenizer`` is the associated ``SimpleTokenizer``.
+        * ``tokenizer`` is the associated ``WikipediaBPETokenizer``.
         * ``device`` is the torch device used.
 
     Raises:
-        FileNotFoundError: If no checkpoint file is found.
+        FileNotFoundError: if no checkpoint file is found.
     """
     if device is None:
-        # Prefer Apple Silicon (MPS), then CUDA, then CPU
-        if torch.backends.mps.is_available():
-            device = torch.device("mps")
-        elif torch.cuda.is_available():
-            device = torch.device("cuda")
-        else:
-            device = torch.device("cpu")
+        device = select_device()
 
-    # Make path absolute if relative
-    if not os.path.isabs(weights_dir):
-        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        weights_dir = os.path.join(base_dir, weights_dir)
+    weights_dir = resolve_repo_path(weights_dir)
 
-    # Try to load best model first, then latest
+    # try to load best model first, then latest
     checkpoint_paths = [
         os.path.join(weights_dir, f"{model_name}_best.pt"),
         os.path.join(weights_dir, f"{model_name}_latest.pt"),
@@ -76,17 +70,14 @@ def load_model(
     print(f"Loading model from {checkpoint_path}")
     checkpoint = torch.load(checkpoint_path, map_location=device)
 
-    # Get config from checkpoint
+    # get config from checkpoint
     config = checkpoint.get("config", {})
     vocab_size = checkpoint.get("tokenizer_vocab_size", 100)
-    
-    # Initialize tokenizer (load pre-trained ByteLevel BPE)
-    tokenizer_dir = os.path.join(
-        os.path.dirname(os.path.abspath(__file__)), "tokenizer_files"
-    )
+
+    # load the pre-trained ByteLevel BPE tokenizer
     tokenizer = WikipediaBPETokenizer.load(tokenizer_dir)
 
-    # Initialize model
+    # initialize model
     model = DecoderOnlyTransformer(
         vocab_size=vocab_size,
         d_model=config.get("d_model", 512),
@@ -94,10 +85,10 @@ def load_model(
         n_layers=config.get("n_layers", 6),
         d_ff=config.get("d_ff", 2048),
         max_seq_len=config.get("max_seq_len", 512),
-        dropout=0.0,  # No dropout during inference
+        dropout=0.0,  # no dropout during inference
     ).to(device)
 
-    # Load weights
+    # load weights
     model.load_state_dict(checkpoint["model_state_dict"])
     model.eval()
 
@@ -111,63 +102,30 @@ def generate_text(
     max_length: int = 100,
     temperature: float = 1.0,
     top_k: int = 50,
-    device: Optional[torch.device] = None,
 ) -> str:
-    """Generates a text continuation from a prompt.
+    """generates a text continuation from a prompt.
+
+    thin wrapper around ``DecoderOnlyTransformer.generate`` that returns only
+    the continuation, without the original prompt.
 
     Args:
-        model: Trained ``DecoderOnlyTransformer`` in eval mode.
-        tokenizer: Corresponding ``SimpleTokenizer``.
-        prompt: Prompt string to be continued.
-        max_length: Maximum number of tokens to generate.
-        temperature: Sampling temperature (higher is more random).
-        top_k: Top-k sampling cutoff (0 to disable).
-        device: Device to use. If ``None``, inferred from model parameters.
+        model: trained ``DecoderOnlyTransformer`` in eval mode.
+        tokenizer: corresponding ``WikipediaBPETokenizer``.
+        prompt: prompt string to be continued.
+        max_length: maximum number of tokens to generate.
+        temperature: sampling temperature (higher is more random).
+        top_k: top-k sampling cutoff (0 to disable).
 
     Returns:
-        The generated continuation text (excluding the original prompt).
+        the generated continuation text (excluding the original prompt).
     """
-    if device is None:
-        device = next(model.parameters()).device
-
-    model.eval()
-
-    # Tokenize prompt
-    tokens = tokenizer.encode(prompt)
-    tokens_tensor = torch.tensor([tokens], device=device)
-
-    generated_tokens = tokens_tensor.clone()
-
-    with torch.no_grad():
-        for _ in range(max_length):
-            # Get predictions
-            logits = model(generated_tokens)
-            logits = logits[0, -1, :] / temperature
-
-            # Top-k sampling
-            if top_k > 0:
-                top_k_logits, top_k_indices = torch.topk(
-                    logits, min(top_k, logits.size(-1))
-                )
-                probs = torch.nn.functional.softmax(top_k_logits, dim=-1)
-                next_token = top_k_indices[torch.multinomial(probs, 1)]
-            else:
-                probs = torch.nn.functional.softmax(logits, dim=-1)
-                next_token = torch.multinomial(probs, 1)
-
-            # Append new token (keep tensor 2D: [batch, seq_len])
-            generated_tokens = torch.cat(
-                [generated_tokens, next_token.unsqueeze(0)], dim=1
-            )
-
-            # Stop if we hit padding token (0) or if sequence gets too long
-            if next_token.item() == 0:
-                break
-
-    # Decode generated tokens
-    generated_text = tokenizer.decode(generated_tokens[0].cpu().tolist())
-
-    # Return only the generated part (after the prompt)
+    generated_text = model.generate(
+        tokenizer,
+        prompt,
+        max_length=max_length,
+        temperature=temperature,
+        top_k=top_k,
+    )
     return generated_text[len(prompt) :] if len(generated_text) > len(prompt) else ""
 
 
@@ -214,7 +172,7 @@ def main() -> None:
     args = parser.parse_args()
 
     try:
-        model, tokenizer, device = load_model(args.model_name, args.weights_dir)
+        model, tokenizer, _ = load_model(args.model_name, args.weights_dir)
 
         print(f"Prompt: {args.prompt}")
         print("Generating...")
@@ -226,7 +184,6 @@ def main() -> None:
             max_length=args.max_length,
             temperature=args.temperature,
             top_k=args.top_k,
-            device=device,
         )
 
         print(f"\nGenerated text:\n{args.prompt}{generated}")

@@ -1,7 +1,7 @@
-"""Tokenizer module using Hugging Face's ByteLevelBPETokenizer.
+"""tokenizer module using Hugging Face's ByteLevelBPETokenizer.
 
-Provides a WikipediaBPETokenizer wrapper that trains or loads a BPE tokenizer from
-Wikipedia texts. Exposes a simple encode/decode interface compatible with the codebase.
+provides a WikipediaBPETokenizer wrapper that trains or loads a BPE tokenizer from
+Wikipedia texts. exposes a simple encode/decode interface compatible with the codebase.
 """
 
 from __future__ import annotations
@@ -13,19 +13,19 @@ from tokenizers import ByteLevelBPETokenizer
 
 
 class WikipediaBPETokenizer:
-    """Wrapper around Hugging Face's ByteLevelBPETokenizer for this project.
+    """wrapper around Hugging Face's ByteLevelBPETokenizer for this project.
 
-    This tokenizer can be trained from a directory of `.txt` files or loaded
-    from previously saved vocab/merges files. It exposes a minimal interface
+    this tokenizer can be trained from a directory of `.txt` files or loaded
+    from previously saved vocab/merges files. it exposes a minimal interface
     compatible with the rest of the codebase: `encode`, `decode`, and
     `vocab_size`.
     """
 
     def __init__(self, tokenizer: ByteLevelBPETokenizer) -> None:
-        """Initializes the wrapper.
+        """initializes the wrapper.
 
         Args:
-            tokenizer: An instance of ByteLevelBPETokenizer.
+            tokenizer: an instance of ByteLevelBPETokenizer.
         """
         self._tokenizer = tokenizer
         self.vocab_size: int = tokenizer.get_vocab_size()
@@ -38,28 +38,24 @@ class WikipediaBPETokenizer:
         vocab_size: int = 8000,
         min_frequency: int = 2,
     ) -> "WikipediaBPETokenizer":
-        """Trains a new tokenizer or loads an existing one from disk.
+        """trains a new tokenizer or loads an existing one from disk.
 
-        If `vocab.json` and `merges.txt` exist in `tokenizer_dir`, they are
-        loaded. Otherwise, a new ByteLevel BPE tokenizer is trained on all
+        if `vocab.json` and `merges.txt` exist in `tokenizer_dir`, they are
+        loaded. otherwise, a new ByteLevel BPE tokenizer is trained on all
         `.txt` files found in `data_dir` and saved to `tokenizer_dir`.
 
         Args:
-            data_dir: Directory containing `.txt` article files.
-            tokenizer_dir: Directory to store/load vocab and merges files.
-            vocab_size: Target vocabulary size.
-            min_frequency: Minimum token frequency to be included in the vocab.
+            data_dir: directory containing `.txt` article files.
+            tokenizer_dir: directory to store/load vocab and merges files.
+            vocab_size: target vocabulary size.
+            min_frequency: minimum token frequency to be included in the vocab.
 
         Returns:
-            An initialized WikipediaBPETokenizer instance.
+            an initialized WikipediaBPETokenizer instance.
         """
         tok_dir = Path(tokenizer_dir)
-        vocab_file = tok_dir / "vocab.json"
-        merges_file = tok_dir / "merges.txt"
-
-        if vocab_file.exists() and merges_file.exists():
-            tokenizer = ByteLevelBPETokenizer(str(vocab_file), str(merges_file))
-            return cls(tokenizer)
+        if (tok_dir / "vocab.json").exists() and (tok_dir / "merges.txt").exists():
+            return cls.load(tokenizer_dir)
 
         tok_dir.mkdir(parents=True, exist_ok=True)
         files = [str(p) for p in Path(data_dir).glob("*.txt")]
@@ -76,25 +72,22 @@ class WikipediaBPETokenizer:
             special_tokens=["<pad>", "<s>", "</s>", "<unk>"],
         )
 
-        # Save model files (vocab.json, merges.txt)
+        # save model files (vocab.json, merges.txt), then reload for consistency
         tokenizer.save_model(str(tok_dir))
-
-        # Reload to ensure consistency
-        tokenizer = ByteLevelBPETokenizer(str(vocab_file), str(merges_file))
-        return cls(tokenizer)
+        return cls.load(tokenizer_dir)
 
     @classmethod
     def load(cls, tokenizer_dir: str) -> "WikipediaBPETokenizer":
-        """Loads an existing tokenizer from `tokenizer_dir`.
+        """loads an existing tokenizer from `tokenizer_dir`.
 
         Args:
-            tokenizer_dir: Directory containing `vocab.json` and `merges.txt`.
+            tokenizer_dir: directory containing `vocab.json` and `merges.txt`.
 
         Returns:
-            An initialized WikipediaBPETokenizer instance.
+            an initialized WikipediaBPETokenizer instance.
 
         Raises:
-            FileNotFoundError: If vocab/merges files are missing.
+            FileNotFoundError: if vocab/merges files are missing.
         """
         tok_dir = Path(tokenizer_dir)
         vocab_file = tok_dir / "vocab.json"
@@ -110,25 +103,23 @@ class WikipediaBPETokenizer:
         return cls(tokenizer)
 
     def encode(self, text: str) -> List[int]:
-        """Converts text to a list of token IDs.
+        """converts text to a list of token IDs.
 
         Args:
-            text: Input string.
+            text: input string.
 
         Returns:
-            List of integer token IDs.
+            list of integer token IDs.
         """
         return self._tokenizer.encode(text).ids
 
     def decode(self, token_ids: List[int]) -> str:
-        """Converts a list of token IDs back to text.
+        """converts a list of token IDs back to text.
 
         Args:
-            token_ids: List of integer token IDs.
+            token_ids: list of integer token IDs.
 
         Returns:
-            Decoded string.
+            decoded string.
         """
         return self._tokenizer.decode(token_ids)
-
-

@@ -1,11 +1,12 @@
-"""Data loading and Wikipedia article downloading module.
+"""data loading and Wikipedia article downloading module.
 
-Handles downloading random Wikipedia articles via the HTTP API and creating PyTorch
-Dataset and DataLoader instances for training. Includes utilities for filename
+handles downloading random Wikipedia articles via the HTTP API and creating PyTorch
+Dataset and DataLoader instances for training. includes utilities for filename
 sanitization and text extraction.
 """
 
 import os
+import random
 import re
 import time
 from multiprocessing import Pool, cpu_count
@@ -18,46 +19,46 @@ from torch.utils.data import DataLoader, Dataset
 
 
 class WikipediaDataset(Dataset):
-    """Dataset of tokenized Wikipedia articles for language modeling."""
+    """dataset of tokenized Wikipedia articles for language modeling."""
 
     def __init__(self, texts: List[str], tokenizer: Any, max_length: int = 512) -> None:
-        """Initializes the dataset.
+        """initializes the dataset.
 
         Args:
-            texts: List of raw article texts.
-            tokenizer: Tokenizer with an ``encode(str) -> List[int]`` method.
-            max_length: Maximum sequence length (including target token).
+            texts: list of raw article texts.
+            tokenizer: tokenizer with an ``encode(str) -> List[int]`` method.
+            max_length: maximum sequence length (including target token).
         """
         self.texts = texts
         self.tokenizer = tokenizer
         self.max_length = max_length
 
     def __len__(self) -> int:
-        """Returns the number of articles."""
+        """returns the number of articles."""
         return len(self.texts)
 
     def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
-        """Returns a single (input_ids, target_ids) pair.
+        """returns a single (input_ids, target_ids) pair.
 
         Args:
-            idx: Index of the article.
+            idx: index of the article.
 
         Returns:
-            A tuple of:
+            a tuple of:
 
-            * input_ids: Tensor of token ids of shape (seq_len - 1,).
-            * target_ids: Tensor of next-token labels of shape (seq_len - 1,).
+            * input_ids: tensor of token ids of shape (seq_len - 1,).
+            * target_ids: tensor of next-token labels of shape (seq_len - 1,).
         """
         text = self.texts[idx]
         tokens = self.tokenizer.encode(text)
 
-        # Truncate or pad to max_length
+        # truncate or pad to max_length
         if len(tokens) > self.max_length:
             tokens = tokens[: self.max_length]
         else:
             tokens = tokens + [0] * (self.max_length - len(tokens))
 
-        # Create input and target (shifted by 1 for next token prediction)
+        # create input and target (shifted by 1 for next token prediction)
         input_ids = torch.tensor(tokens[:-1], dtype=torch.long)
         target_ids = torch.tensor(tokens[1:], dtype=torch.long)
 
@@ -65,16 +66,16 @@ class WikipediaDataset(Dataset):
 
 
 def sanitize_filename(title: str) -> str:
-    """Converts a Wikipedia article title to a safe filename.
+    """converts a Wikipedia article title to a safe filename.
 
-    The result is lowercase, uses underscores between words, and strips all
+    the result is lowercase, uses underscores between words, and strips all
     non-alphanumeric characters before use.
 
     Args:
-        title: Original article title.
+        title: original article title.
 
     Returns:
-        Sanitized filename (without extension).
+        sanitized filename (without extension).
     """
     title = title.lower()
     title = re.sub(r"[^a-z0-9]+", "_", title)
@@ -87,26 +88,26 @@ def download_wikipedia_articles(
     save_dir: str = "wikipedia/data",
     delay: float = 0.0,
 ) -> List[Tuple[str, str]]:
-    """Downloads ``n`` random Wikipedia articles via the public HTTP API.
+    """downloads ``n`` random Wikipedia articles via the public HTTP API.
 
-    Articles are fetched using the official Wikipedia API, saved as text files,
+    articles are fetched using the official Wikipedia API, saved as text files,
     and basic metadata (title and URL) is written at the top of each file.
-    Downloading is parallelized with multiprocessing for maximum throughput.
+    downloading is parallelized with multiprocessing for maximum throughput.
 
     Args:
-        n: Number of articles to download.
-        save_dir: Directory to which article text files will be written.
-        delay: Delay in seconds between requests per worker, to be polite.
+        n: number of articles to download.
+        save_dir: directory to which article text files will be written.
+        delay: delay in seconds between requests per worker, to be polite.
 
     Returns:
-        List of ``(title, filepath)`` tuples for successfully downloaded articles.
+        list of ``(title, filepath)`` tuples for successfully downloaded articles.
     """
     Path(save_dir).mkdir(parents=True, exist_ok=True)
 
     api_url = "https://en.wikipedia.org/w/api.php"
     downloaded: List[Tuple[str, str]] = []
 
-    # Prepare arguments for worker processes
+    # prepare arguments for worker processes
     args = [(i, api_url, save_dir, delay) for i in range(n)]
     num_procs = min(cpu_count() or 2, 8)
 
@@ -124,10 +125,10 @@ def download_wikipedia_articles(
 def _download_single_article(
     args: Tuple[int, str, str, float],
 ) -> Optional[Tuple[str, str]]:
-    """Worker function to download a single random Wikipedia article.
+    """worker function to download a single random Wikipedia article.
 
     Args:
-        args: Tuple of (index, api_url, save_dir, delay_seconds).
+        args: tuple of (index, api_url, save_dir, delay_seconds).
 
     Returns:
         (title, filepath) tuple if successful, otherwise None.
@@ -138,7 +139,7 @@ def _download_single_article(
         "action": "query",
         "format": "json",
         "list": "random",
-        "rnnamespace": 0,  # Main namespace only
+        "rnnamespace": 0,  # main namespace only
         "rnlimit": 1,
     }
 
@@ -147,7 +148,7 @@ def _download_single_article(
     }
 
     try:
-        # Request a random article
+        # request a random article
         response = requests.get(api_url, params=params, headers=headers, timeout=10)
         response.raise_for_status()
         data = response.json()
@@ -156,13 +157,13 @@ def _download_single_article(
         page_id = page["id"]
         page_title = page["title"]
 
-        # Fetch the article content
+        # fetch the article content
         content_params = {
             "action": "query",
             "format": "json",
             "pageids": page_id,
             "prop": "extracts",
-            "explaintext": True,  # Plain text without HTML
+            "explaintext": True,  # plain text without HTML
         }
 
         content_response = requests.get(
@@ -173,13 +174,13 @@ def _download_single_article(
 
         article_text = content_data["query"]["pages"][str(page_id)].get("extract", "")
 
-        # Sanitize filename (limit length to avoid OS issues)
+        # sanitize filename (limit length to avoid OS issues)
         base_name = sanitize_filename(page_title) or f"article_{page_id}"
         base_name = base_name[:100]
         filename = f"{base_name}.txt"
         filepath = os.path.join(save_dir, filename)
 
-        # Save to file with simple metadata header
+        # save to file with simple metadata header
         with open(filepath, "w", encoding="utf-8") as f:
             f.write(f"Title: {page_title}\n")
             f.write(f"URL: https://en.wikipedia.org/?curid={page_id}\n")
@@ -189,7 +190,7 @@ def _download_single_article(
         print(f"[{index + 1}] Downloaded: {page_title}")
         print(f"         Saved to: {filepath}")
 
-        # Optional per-worker delay
+        # optional per-worker delay
         if delay > 0:
             time.sleep(delay)
 
@@ -204,13 +205,13 @@ def _download_single_article(
 
 
 def load_articles_from_dir(data_dir: str) -> List[str]:
-    """Loads all article texts from a directory.
+    """loads all article texts from a directory.
 
     Args:
-        data_dir: Directory containing ``.txt`` article files.
+        data_dir: directory containing ``.txt`` article files.
 
     Returns:
-        List of article contents as strings.
+        list of article contents as strings.
     """
     texts: List[str] = []
     for filename in os.listdir(data_dir):
@@ -231,33 +232,33 @@ def create_dataloader(
     num_workers: int = 0,
     use_local_articles: bool = False,
 ) -> DataLoader:
-    """Creates a DataLoader over Wikipedia articles.
+    """creates a DataLoader over Wikipedia articles.
 
-    This function will download ``n_articles`` random Wikipedia pages into the
+    this function will download ``n_articles`` random Wikipedia pages into the
     specified directory and then build a ``WikipediaDataset`` and
     ``DataLoader`` from the downloaded texts.
 
     Args:
-        data_dir: Directory where article text files will be stored or read from.
-        tokenizer: Tokenizer instance used to encode the text.
-        n_articles: Number of articles to download or sample.
-        batch_size: Batch size for the loader.
-        max_length: Maximum token sequence length.
-        shuffle: Whether to shuffle the dataset.
-        num_workers: Number of subprocesses for data loading.
-        use_local_articles: When True, only use already downloaded local
+        data_dir: directory where article text files will be stored or read from.
+        tokenizer: tokenizer instance used to encode the text.
+        n_articles: number of articles to download or sample.
+        batch_size: batch size for the loader.
+        max_length: maximum token sequence length.
+        shuffle: whether to shuffle the dataset.
+        num_workers: number of subprocesses for data loading.
+        use_local_articles: when True, only use already downloaded local
             articles and randomly sample up to ``n_articles`` of them.
 
     Returns:
-        A configured ``torch.utils.data.DataLoader`` instance.
+        a configured ``torch.utils.data.DataLoader`` instance.
     """
-    # Ensure directory exists
+    # ensure directory exists
     os.makedirs(data_dir, exist_ok=True)
 
     texts: List[str] = []
 
     if use_local_articles:
-        # Use only locally available articles
+        # use only locally available articles
         all_texts = load_articles_from_dir(data_dir)
         if not all_texts:
             raise ValueError(
@@ -265,18 +266,16 @@ def create_dataloader(
                 f"{data_dir}. Please download articles first."
             )
         if len(all_texts) > n_articles:
-            import random
-
             texts = random.sample(all_texts, n_articles)
         else:
             texts = all_texts
     else:
-        # Download fresh set of articles. In some environments (e.g., no network),
+        # download fresh set of articles. in some environments (e.g., no network),
         # this may fail and return an empty list.
         downloaded = download_wikipedia_articles(n_articles, save_dir=data_dir)
 
         if downloaded:
-            # Prefer texts from the files we just downloaded
+            # prefer texts from the files we just downloaded
             for _, filepath in downloaded:
                 try:
                     with open(filepath, "r", encoding="utf-8") as f:
@@ -285,7 +284,7 @@ def create_dataloader(
                     continue
 
         if not texts:
-            # Fallback: use whatever .txt files already exist in the directory
+            # fallback: use whatever .txt files already exist in the directory
             print(
                 "Warning: failed to download new Wikipedia articles, "
                 f"falling back to any existing .txt files in {data_dir}"
