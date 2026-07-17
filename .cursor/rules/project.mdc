@@ -10,3 +10,4 @@ alwaysApply: true
 - Keep changes scoped to what was asked.
 - When the user invokes `/concise` or asks to be concise / keep it short / trim it down / cut the fluff / TL;DR (including implicit brevity), read and follow `.cursor/skills/concise/SKILL.md` (compose with any other active skill).
 - When writing, editing, refactoring, or reviewing Python/PyTorch (including implicit `.py` work, or `/python-coding`), read and follow `.cursor/skills/python-coding/SKILL.md`.
+- When working on ML/DL code — model architectures, datasets/dataloaders, tokenizers, training, checkpointing, inference, or model configs (including implicit ML work, or `/ml-coding`) — read and follow `.cursor/skills/ml-coding/SKILL.md` (compose with `python-coding`).

@@ -1,10 +1,11 @@
 """model architecture for decoder-only transformer.
 
 defines the DecoderOnlyTransformer class using PyTorch's native nn.TransformerEncoder
-with causal masking for autoregressive text generation.
+with causal masking for autoregressive text generation. the stack is configured
+GPT-style: pre-layer-norm, GELU activations, weight-tied input/output embeddings,
+and the fused scaled-dot-product-attention causal fast path.
 """
 
-import math
 from typing import Any, List, Optional, Union
 
 import torch
@@ -17,7 +18,8 @@ class DecoderOnlyTransformer(nn.Module):
 
     this model uses PyTorch's native ``nn.TransformerEncoder`` with a causal
     mask to implement a GPT-style decoder-only transformer for next-token
-    prediction.
+    prediction. it is pre-norm (``norm_first=True``), uses GELU feed-forward
+    activations, and ties the token-embedding and output-projection weights.
     """
 
     def __init__(
@@ -46,43 +48,47 @@ class DecoderOnlyTransformer(nn.Module):
         self.vocab_size = vocab_size
         self.max_seq_len = max_seq_len
 
-        # token and position embeddings (using native nn.Embedding)
+        # token and position embeddings (learned, native nn.Embedding)
         self.token_embedding = nn.Embedding(vocab_size, d_model)
         self.position_embedding = nn.Embedding(max_seq_len, d_model)
+        self.dropout = nn.Dropout(dropout)
 
-        # use PyTorch's built-in TransformerEncoder with a causal mask
+        # native pre-norm transformer stack with GELU feed-forward. pre-norm
+        # (norm_first=True) trains more stably than the post-norm default.
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=d_model,
             nhead=n_heads,
             dim_feedforward=d_ff,
             dropout=dropout,
+            activation="gelu",
+            norm_first=True,
             batch_first=True,  # (batch, seq, feature)
         )
-        self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=n_layers)
+        # enable_nested_tensor is incompatible with norm_first; disable it to
+        # keep the causal path active and silence the runtime warning.
+        self.encoder = nn.TransformerEncoder(
+            encoder_layer, num_layers=n_layers, enable_nested_tensor=False
+        )
 
-        # output projection
+        # final norm and vocabulary projection
         self.ln_f = nn.LayerNorm(d_model)
-        self.head = nn.Linear(d_model, vocab_size)
-        self.dropout = nn.Dropout(dropout)
+        self.head = nn.Linear(d_model, vocab_size, bias=False)
 
-    def _causal_mask(self, seq_len: int, device: torch.device) -> torch.Tensor:
-        """builds an upper-triangular causal attention mask.
+        self.apply(self._init_weights)
 
-        the resulting mask is suitable for ``nn.TransformerEncoder`` as
-        ``mask``.
+        # weight tying: share the token-embedding matrix with the output head.
+        # done after init so both refer to the same initialized tensor.
+        self.head.weight = self.token_embedding.weight
 
-        Args:
-            seq_len: sequence length for which to build the mask.
-            device: device on which to allocate the mask.
-
-        Returns:
-            a tensor of shape (seq_len, seq_len) with zeros on and below
-            the diagonal and ``-inf`` above the diagonal.
-        """
-        mask = torch.triu(torch.ones(seq_len, seq_len, device=device), diagonal=1)
-        mask = mask.masked_fill(mask == 1, float("-inf"))
-        mask = mask.masked_fill(mask == 0, 0.0)
-        return mask
+    @staticmethod
+    def _init_weights(module: nn.Module) -> None:
+        """applies GPT-style normal initialization to linear and embedding layers."""
+        if isinstance(module, nn.Linear):
+            nn.init.normal_(module.weight, mean=0.0, std=0.02)
+            if module.bias is not None:
+                nn.init.zeros_(module.bias)
+        elif isinstance(module, nn.Embedding):
+            nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
     def forward(
         self,
@@ -93,8 +99,8 @@ class DecoderOnlyTransformer(nn.Module):
 
         Args:
             x: long tensor of token ids with shape (batch_size, seq_len).
-            mask: optional causal attention mask. if ``None``, a standard
-                causal mask is created internally.
+            mask: optional causal attention mask of shape (seq_len, seq_len). if
+                ``None``, a standard causal mask is created internally.
 
         Returns:
             logits tensor of shape (batch_size, seq_len, vocab_size).
@@ -102,29 +108,24 @@ class DecoderOnlyTransformer(nn.Module):
         device = x.device
         batch_size, seq_len = x.size()
 
-        # token embeddings
-        x = self.token_embedding(x) * math.sqrt(self.d_model)  # (batch, seq, d_model)
-
-        # position embeddings (using native nn.Embedding)
+        # token + learned positional embeddings  # (batch, seq, d_model)
         positions = torch.arange(seq_len, device=device).unsqueeze(0).expand(
             batch_size, -1
         )
-        x = x + self.position_embedding(positions)  # (batch, seq, d_model)
-
+        x = self.token_embedding(x) + self.position_embedding(positions)
         x = self.dropout(x)
 
-        # causal mask for self-attention
+        # causal self-attention. passing is_causal=True lets nn.TransformerEncoder
+        # take the fused scaled-dot-product-attention path.
         if mask is None:
-            mask = self._causal_mask(seq_len, device)  # (seq, seq)
+            mask = nn.Transformer.generate_square_subsequent_mask(seq_len, device=device)
+        x = self.encoder(src=x, mask=mask, is_causal=True)  # (batch, seq, d_model)
 
-        # nn.TransformerEncoder API: (src, mask)
-        x = self.encoder(src=x, mask=mask)
-
-        # final layer norm and projection
         x = self.ln_f(x)
-        logits = self.head(x)
+        logits = self.head(x)  # (batch, seq, vocab_size)
         return logits
 
+    @torch.no_grad()
     def generate(
         self,
         tokenizer: Any,
@@ -137,7 +138,8 @@ class DecoderOnlyTransformer(nn.Module):
 
         Args:
             tokenizer: object implementing ``encode(str) -> List[int]`` and
-                ``decode(List[int]) -> str``.
+                ``decode(List[int]) -> str``; an ``eos_id`` attribute is used as
+                the stop token when present.
             prompt: input prompt as a string or list of token ids.
             max_length: maximum number of tokens to generate.
             temperature: softmax temperature; higher values increase randomness.
@@ -150,33 +152,32 @@ class DecoderOnlyTransformer(nn.Module):
         device = next(self.parameters()).device
 
         if isinstance(prompt, str):
-            tokens = tokenizer.encode(prompt)
+            token_ids = tokenizer.encode(prompt)
         else:
-            tokens = prompt
+            token_ids = list(prompt)
 
-        tokens = torch.tensor([tokens], device=device)
+        # stop token: prefer the tokenizer's eos, fall back to padding id 0
+        eos_id = getattr(tokenizer, "eos_id", 0)
 
-        with torch.no_grad():
-            for _ in range(max_length):
-                # condition on at most the last max_seq_len tokens
-                logits = self.forward(tokens[:, -self.max_seq_len :])
-                logits = logits[0, -1, :] / temperature
+        tokens = torch.tensor([token_ids], device=device)
 
-                # top-k sampling
-                if top_k > 0:
-                    k = min(top_k, logits.size(-1))
-                    top_k_logits, top_k_indices = torch.topk(logits, k)
-                    probs = F.softmax(top_k_logits, dim=-1)
-                    next_token = top_k_indices[torch.multinomial(probs, 1)]
-                else:
-                    probs = F.softmax(logits, dim=-1)
-                    next_token = torch.multinomial(probs, 1)
+        for _ in range(max_length):
+            # condition on at most the last max_seq_len tokens
+            logits = self.forward(tokens[:, -self.max_seq_len :])
+            logits = logits[0, -1, :] / max(temperature, 1e-6)
 
-                tokens = torch.cat([tokens, next_token.unsqueeze(0)], dim=1)
+            if top_k > 0:
+                k = min(top_k, logits.size(-1))
+                top_k_logits, top_k_indices = torch.topk(logits, k)
+                probs = F.softmax(top_k_logits, dim=-1)
+                next_token = top_k_indices[torch.multinomial(probs, 1)]
+            else:
+                probs = F.softmax(logits, dim=-1)
+                next_token = torch.multinomial(probs, 1)
 
-                # stop at the padding token (id 0), used as end-of-text
-                if next_token.item() == 0:
-                    break
+            tokens = torch.cat([tokens, next_token.unsqueeze(0)], dim=1)
+
+            if next_token.item() == eos_id:
+                break
 
         return tokenizer.decode(tokens[0].cpu().tolist())
-

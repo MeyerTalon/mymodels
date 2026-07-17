@@ -25,13 +25,23 @@ def test_forward_output_shape():
     assert logits.shape == (2, 8, 32)
 
 
-def test_causal_mask_blocks_future_positions():
+def test_output_head_is_weight_tied():
     model = _tiny_model()
-    mask = model._causal_mask(4, torch.device("cpu"))
-    assert mask.shape == (4, 4)
-    assert torch.all(torch.tril(mask) == 0)
-    above_diagonal = mask[torch.triu(torch.ones(4, 4, dtype=torch.bool), diagonal=1)]
-    assert torch.all(above_diagonal == float("-inf"))
+    # the head must share storage with the token embedding (weight tying)
+    assert model.head.weight is model.token_embedding.weight
+
+
+def test_forward_is_causal():
+    # changing a future token must not affect an earlier position's logits
+    torch.manual_seed(0)
+    model = _tiny_model()
+    model.eval()
+    x = torch.randint(1, 32, (1, 6))
+    base = model(x)
+    x_mod = x.clone()
+    x_mod[0, -1] = (x[0, -1] + 1) % 32
+    modified = model(x_mod)
+    assert torch.allclose(base[0, :-1], modified[0, :-1], atol=1e-5)
 
 
 def test_generate_returns_string(dummy_tokenizer):

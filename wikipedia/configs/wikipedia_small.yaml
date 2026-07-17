@@ -1,28 +1,38 @@
+# ~5.3M parameters (5,273,088; weight-tied embeddings)
 # model configuration
 model_name: wikipedia_small
-number_of_articles: 10
-use_local_articles: False
+number_of_articles: 200
+use_local_articles: True     # reuse the local corpus so a run needs no network
+
+# tokenizer
+vocab_size: 8000
+min_frequency: 2
 
 # model architecture
-d_model: 512
-n_heads: 8
-n_layers: 6
-d_ff: 2048
-max_seq_len: 512
+d_model: 256
+n_heads: 4
+n_layers: 4
+d_ff: 1024
+max_seq_len: 256
 dropout: 0.1
 
 # training configuration
-num_epochs: 10
-batch_size: 32
-learning_rate: 0.0001
-weight_decay: 0.01
-min_lr: 0.000001
+num_epochs: 5
+batch_size: 16
+grad_accum_steps: 1          # effective batch = batch_size * grad_accum_steps
+learning_rate: 0.0003
+min_lr: 0.00003
+weight_decay: 0.1
+warmup_epochs: 1
 max_grad_norm: 1.0
+precision: fp16              # fp16 autocast on MPS/CUDA, ignored on CPU
+val_fraction: 0.02
 save_every: 1
+log_interval: 50
 
 # data configuration
 data_dir: wikipedia/data
-num_workers: 0
+num_workers: 2
 
 # weights directory
 weights_dir: wikipedia/weights

@@ -35,6 +35,21 @@ def test_train_or_load_roundtrip(tmp_path):
     assert reloaded.encode("fox") == tokenizer.encode("fox")
 
 
+def test_special_token_ids(tmp_path):
+    data_dir = tmp_path / "data"
+    tok_dir = tmp_path / "tok"
+    _write_corpus(data_dir)
+
+    tokenizer = WikipediaBPETokenizer.train_or_load(
+        str(data_dir), str(tok_dir), vocab_size=TINY_VOCAB_SIZE
+    )
+    # special tokens occupy the conventional leading ids
+    assert tokenizer.pad_id == 0
+    assert tokenizer.bos_id == 1
+    assert tokenizer.eos_id == 2
+    assert tokenizer.unk_id == 3
+
+
 def test_train_or_load_without_data_raises(tmp_path):
     with pytest.raises(ValueError):
         WikipediaBPETokenizer.train_or_load(

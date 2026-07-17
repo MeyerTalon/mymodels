@@ -5,6 +5,7 @@ text continuations from prompts. supports configurable sampling parameters (temp
 """
 
 import argparse
+import contextlib
 import os
 import sys
 from typing import Optional, Tuple
@@ -13,7 +14,12 @@ import torch
 
 from wikipedia.architecture import DecoderOnlyTransformer
 from wikipedia.tokenizer import WikipediaBPETokenizer
-from wikipedia.utils import TOKENIZER_DIR, resolve_repo_path, select_device
+from wikipedia.utils import (
+    TOKENIZER_DIR,
+    resolve_repo_path,
+    select_autocast_dtype,
+    select_device,
+)
 
 
 def load_model(
@@ -116,13 +122,21 @@ def generate_text(
     Returns:
         the generated continuation text (excluding the original prompt).
     """
-    generated_text = model.generate(
-        tokenizer,
-        prompt,
-        max_length=max_length,
-        temperature=temperature,
-        top_k=top_k,
+    device = next(model.parameters()).device
+    amp_dtype = select_autocast_dtype(device, "fp16")
+    autocast = (
+        torch.autocast(device_type=device.type, dtype=amp_dtype)
+        if amp_dtype is not None
+        else contextlib.nullcontext()
     )
+    with autocast:
+        generated_text = model.generate(
+            tokenizer,
+            prompt,
+            max_length=max_length,
+            temperature=temperature,
+            top_k=top_k,
+        )
     return generated_text[len(prompt) :] if len(generated_text) > len(prompt) else ""
 
 

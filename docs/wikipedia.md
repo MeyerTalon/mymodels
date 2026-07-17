@@ -6,12 +6,23 @@ A decoder-only transformer model trained on Wikipedia articles for sentence comp
 
 This project implements a GPT-style decoder-only transformer that learns to complete sentences based on patterns learned from Wikipedia articles. The model uses a byte-level BPE tokenizer and is designed to be lightweight and easy to train on consumer hardware.
 
-## Folder Structure
+## Model sizes
 
-This README describes the contents of the `wikipedia/` package in this repo.
-Similar READMEs will be added under `docs/` for other fun example models.
+| Config | Parameters | Key dims |
+|--------|------------|----------|
+| `wikipedia_small` | ~5.3M (5,273,088) | `d_model=256`, `n_layers=4`, `vocab_size=8000`, `max_seq_len=256` |
+| `wikipedia_medium` | ~33.7M (33,674,240) | `d_model=512`, `n_layers=8`, `vocab_size=16000`, `max_seq_len=512` |
+
+Counts include weight-tied token embeddings and output projection. See the first line of each config in `wikipedia/configs/` for the canonical number.
+
+## Folder structure
+
+This README describes the `wikipedia/` model package. Per-model docs live in the repo-root `docs/` directory (`README-<pkg>.md`).
 
 ```
+docs/
+└── README-wikipedia.md    # This file
+
 wikipedia/
 ├── __init__.py            # Marks this directory as a Python package
 ├── architecture.py        # Model architecture definition
@@ -21,14 +32,13 @@ wikipedia/
 ├── inference.py           # Inference script for text generation
 ├── utils.py               # Shared device selection and path resolution
 ├── configs/               # Configuration YAML files
-├── docs/                  # This README
 ├── tests/                 # Lightweight pytest tests
 ├── data/                  # Downloaded Wikipedia articles (gitignored, created automatically)
 ├── tokenizer_files/       # Trained tokenizer vocab/merges (gitignored, created automatically)
 └── weights/               # Saved model checkpoints (gitignored, created automatically)
 ```
 
-## Files Description
+## Files description
 
 ### `wikipedia/architecture.py`
 
@@ -37,32 +47,36 @@ Contains the model architecture:
 - **`DecoderOnlyTransformer`**: Main model class implementing a decoder-only transformer using PyTorch's native modules
 
 **Key Features:**
-- Uses PyTorch's built-in transformer components (`nn.TransformerEncoderLayer`, `nn.TransformerEncoder`) with a causal mask
-- Uses native `nn.Embedding` for both token and positional embeddings (no custom modules)
-- Causal masking for autoregressive generation (`generate` method with temperature and top-k sampling)
+- Uses PyTorch's built-in transformer components (`nn.TransformerEncoderLayer`, `nn.TransformerEncoder`) with a causal mask, configured GPT-style: pre-layer-norm (`norm_first=True`), GELU feed-forward activations, and the fused scaled-dot-product-attention causal fast path (`is_causal=True`)
+- Uses native `nn.Embedding` for both token and positional embeddings (no custom modules), with the token embedding weight-tied to the output projection
+- GPT-style normal (std 0.02) weight initialization
+- Causal masking for autoregressive generation (`generate` method with temperature and top-k sampling, stopping on the tokenizer's end-of-sequence id)
 - Configurable model size (embedding dimension, number of heads, layers, etc.)
 
 ### `wikipedia/tokenizer.py`
 
 Byte-level BPE tokenization:
 
-- **`WikipediaBPETokenizer`**: Wrapper around Hugging Face's `ByteLevelBPETokenizer` exposing `encode`, `decode`, and `vocab_size`. Trained on the downloaded articles the first time you train (`train_or_load`) and saved to `wikipedia/tokenizer_files/`.
+- **`WikipediaBPETokenizer`**: Wrapper around Hugging Face's `ByteLevelBPETokenizer` exposing `encode`, `decode`, `vocab_size`, and the special-token ids (`pad_id`, `bos_id`, `eos_id`, `unk_id`). Trained on the downloaded articles the first time you train (`train_or_load`, with `vocab_size`/`min_frequency` from config) and saved to `wikipedia/tokenizer_files/`.
 
 ### `wikipedia/data.py`
 
 Handles Wikipedia article downloading and data preprocessing:
 
-- **`WikipediaDataset`**: PyTorch Dataset class for loading and preprocessing Wikipedia articles
+- **`WikipediaDataset`**: PyTorch Dataset over a single packed token stream, cut into contiguous `block_size`-length blocks (`input_ids`, next-token `target_ids`) — no padding
 - **`sanitize_filename()`**: Converts article titles to valid filenames (lowercase, underscores, alphanumeric only)
+- **`extract_article_text()`**: Strips the metadata header from a downloaded article file, keeping only the body
 - **`download_wikipedia_articles()`**: Downloads n randomly selected Wikipedia articles and saves them to disk
-- **`load_articles_from_dir()`**: Loads article texts from saved files
-- **`create_dataloader()`**: Creates a PyTorch DataLoader from downloaded articles
+- **`load_articles_from_dir()`**: Loads and cleans article bodies from saved files
+- **`gather_texts()`**: Collects cleaned article texts, downloading them or sampling local ones
+- **`build_token_stream()`**: Tokenizes and concatenates texts into one stream, separated by the end-of-sequence id
+- **`create_dataloaders()`**: Builds packed train (and optional validation) DataLoaders, splitting the token stream at the token level
 
 **Features:**
-- Automatically downloads random Wikipedia articles
-- Sanitizes article titles for use as filenames
-- Handles disambiguation pages gracefully
-- Creates trainable batches with proper padding and tokenization
+- Automatically downloads random Wikipedia articles (or reuses local ones offline)
+- Strips metadata headers so only article text is trained on
+- **Packs the whole corpus into contiguous fixed-length blocks** so every token contributes a training signal (no wasted padding), the standard efficient setup for causal language modeling
+- Inserts an end-of-sequence separator between articles so the model learns document boundaries
 
 ### `wikipedia/training.py`
 
@@ -72,9 +86,10 @@ Training pipeline and Trainer class:
   - Configuration loading from YAML
   - Data setup and downloading
   - Model initialization
-  - Training loop with progress tracking
-  - Checkpoint saving (best, latest, and epoch-specific)
-  - Learning rate scheduling
+  - Mixed-precision training loop (fp16 autocast on MPS/CUDA) with gradient accumulation and progress tracking
+  - Validation on a held-out token region and perplexity reporting
+  - Checkpoint saving (best, latest, and epoch-specific), best selected on validation loss when available
+  - Learning rate scheduling (per-epoch linear warmup then cosine decay)
 
 **Usage (from repo root):**
 ```bash
@@ -82,11 +97,13 @@ uv run python -m wikipedia.training wikipedia/configs/wikipedia_small.yaml
 ```
 
 **Features:**
-- Automatic data downloading if directory is empty
+- Automatic data downloading if directory is empty (or offline reuse of local articles)
+- Mixed precision (fp16 autocast) and gradient accumulation, tuned for Apple silicon on ~24GB of unified memory
+- `AdamW` with decoupled weight decay applied only to weight matrices (not biases, norms, or embeddings)
 - Gradient clipping for training stability
-- Cosine annealing learning rate schedule
+- Linear-warmup then cosine-decay learning rate schedule
 - Saves multiple checkpoint types (best model, latest, per-epoch)
-- Progress bars with loss tracking
+- Progress bars with loss and learning-rate tracking
 
 ### `wikipedia/inference.py`
 
@@ -114,6 +131,7 @@ uv run python -m wikipedia.inference --model_name wikipedia_small --prompt "The 
 Shared helpers used by the training and inference entry points:
 
 - **`select_device()`**: Picks the best available device (MPS, then CUDA, then CPU)
+- **`select_autocast_dtype()`**: Resolves the autocast dtype for a device and precision setting (returns `None` on CPU or for `fp32`)
 - **`resolve_repo_path()`**: Resolves repo-root-relative paths (e.g. `wikipedia/weights`) to absolute paths
 
 ### `wikipedia/tests/`
@@ -124,29 +142,38 @@ Lightweight `pytest` tests for the critical functions (tiny model dims, no netwo
 uv run pytest wikipedia/tests
 ```
 
-### `configs/wikipedia_small.yaml`, `configs/wikipedia_medium.yaml`
+### `wikipedia/configs/wikipedia_small.yaml`, `wikipedia/configs/wikipedia_medium.yaml`
 
 Configuration files defining model and training parameters:
+
+**Tokenizer:**
+- `vocab_size`: Target BPE vocabulary size (default: 8000)
+- `min_frequency`: Minimum token frequency to enter the vocab (default: 2)
 
 **Model Architecture:**
 - `d_model`: Embedding dimension (default: 512)
 - `n_heads`: Number of attention heads (default: 8)
 - `n_layers`: Number of transformer layers (default: 6)
 - `d_ff`: Feed-forward dimension (default: 2048)
-- `max_seq_len`: Maximum sequence length (default: 512)
+- `max_seq_len`: Maximum sequence length, also the packed block size (default: 512)
 - `dropout`: Dropout rate (default: 0.1)
 
 **Training:**
 - `num_epochs`: Number of training epochs (default: 10)
-- `batch_size`: Batch size (default: 32)
-- `learning_rate`: Initial learning rate (default: 0.0001)
-- `weight_decay`: Weight decay for regularization (default: 0.01)
-- `min_lr`: Minimum learning rate for scheduler (default: 0.000001)
+- `batch_size`: Batch size (default: 16)
+- `grad_accum_steps`: Micro-batches accumulated per optimizer step; effective batch = `batch_size * grad_accum_steps` (default: 1)
+- `learning_rate`: Peak learning rate after warmup (default: 0.0003)
+- `min_lr`: Floor learning rate the cosine schedule decays to (default: 0.00003)
+- `warmup_epochs`: Linear-warmup epochs before cosine decay (default: 0)
+- `weight_decay`: Decoupled weight decay for weight matrices (default: 0.1)
 - `max_grad_norm`: Gradient clipping threshold (default: 1.0)
+- `precision`: `fp16`, `bf16`, or `fp32`; autocast is used on MPS/CUDA and disabled on CPU (default: `fp16` on accelerators, `fp32` on CPU)
+- `val_fraction`: Fraction of the token stream held out for validation, 0 to disable (default: 0.0)
 - `save_every`: Save checkpoint every N epochs (default: 1)
+- `log_interval`: Progress-bar update interval in steps (default: 50)
 
 **Data:**
-- `number_of_articles`: Number of Wikipedia articles to download (default: 5)
+- `number_of_articles`: Number of Wikipedia articles to download or sample (default: 5)
 - `use_local_articles`: When True, reuse already-downloaded articles instead of downloading (no network needed)
 - `data_dir`: Directory to save/load articles (default: wikipedia/data)
 - `num_workers`: Number of DataLoader workers (default: 0)
@@ -172,7 +199,7 @@ uv sync
 
 ### Training a Model
 
-1. Create or modify a configuration file in `configs/`:
+1. Create or modify a configuration file in `wikipedia/configs/`:
 ```yaml
 model_name: my_model
 number_of_articles: 10
@@ -228,34 +255,34 @@ The history of artificial intelligence began in the 1950s when researchers...
 - **Top-k** (1-100): Limits sampling to top k most likely tokens. Set to 0 to disable
 - **Max length**: Maximum number of tokens to generate
 
-## Model Architecture Details
+## Model architecture details
 
-The model uses a standard decoder-only transformer architecture:
+The model uses a standard GPT-style decoder-only transformer architecture:
 
 1. **Token Embedding**: BPE token embeddings using `nn.Embedding`
 2. **Positional Encoding**: Learned positional embeddings using native `nn.Embedding`
-3. **Transformer Stack**: Stack of self-attention layers with:
-   - Multi-head self-attention (causal masking)
-   - Feed-forward networks
-   - Layer normalization
+3. **Transformer Stack**: Pre-norm stack of self-attention layers with:
+   - Multi-head self-attention (causal masking, fused SDPA fast path)
+   - GELU feed-forward networks
+   - Layer normalization applied before each sub-layer (`norm_first=True`)
    - Residual connections
-4. **Output Head**: Linear projection to vocabulary size
+4. **Output Head**: Linear projection to vocabulary size, weight-tied to the token embedding
 
 The implementation leverages PyTorch's native `nn.TransformerEncoder` with a causal attention mask (equivalent to a decoder-only/GPT-style stack) for efficiency and maintainability.
 
-## Data Format
+## Data format
 
 Wikipedia articles are downloaded and saved as plain text files in `wikipedia/data/`:
 - Filenames are sanitized article titles (lowercase, underscores, alphanumeric only)
 - Each file starts with a short metadata header (title and URL) followed by the full article text
-- Each article is tokenized and truncated/padded to `max_seq_len` for training
+- For training, the header is stripped and every article is tokenized, concatenated into one stream (separated by an end-of-sequence token), and cut into contiguous `max_seq_len`-length blocks — no truncation to a single window and no padding
 
-## Tips and Best Practices
+## Tips and best practices
 
 1. **Start Small**: Begin with a small model (e.g., `d_model=256`, `n_layers=4`) and few articles to test the pipeline
 2. **Monitor Training**: Watch the loss decrease - if it plateaus, try adjusting learning rate or model size
 3. **Data Quality**: More articles generally lead to better results, but require more training time
-4. **Memory**: Larger models and longer sequences require more GPU memory. Adjust `batch_size` and `max_seq_len` accordingly
+4. **Memory**: Larger models and longer sequences require more memory. On Apple silicon, keep `precision: fp16` and raise the effective batch with `grad_accum_steps` rather than a larger `batch_size` if you hit the unified-memory ceiling
 5. **Checkpoints**: The training script saves multiple checkpoint types - use `_best.pt` for inference
 
 ## Troubleshooting
@@ -279,4 +306,3 @@ See the LICENSE file in the project root.
 ## Contributing
 
 This is a personal project, but suggestions and improvements are welcome!
-

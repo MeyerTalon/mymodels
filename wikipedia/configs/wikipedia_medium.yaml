@@ -1,28 +1,38 @@
-# model configuration
+# ~33.7M parameters (33,674,240; weight-tied embeddings)
+# model configuration — tuned to train on Apple silicon with ~24GB unified memory
 model_name: wikipedia_medium
 number_of_articles: 10000
 use_local_articles: True
 
+# tokenizer
+vocab_size: 16000
+min_frequency: 2
+
 # model architecture
-d_model: 1024
-n_heads: 16
-n_layers: 16
-d_ff: 4096
+d_model: 512
+n_heads: 8
+n_layers: 8
+d_ff: 2048
 max_seq_len: 512
 dropout: 0.1
 
 # training configuration
-num_epochs: 10
-batch_size: 4
-learning_rate: 0.0001
-weight_decay: 0.01
-min_lr: 0.000001
+num_epochs: 20
+batch_size: 16
+grad_accum_steps: 4          # effective batch = 64 sequences of 512 tokens
+learning_rate: 0.0003
+min_lr: 0.00003
+weight_decay: 0.1
+warmup_epochs: 2
 max_grad_norm: 1.0
+precision: fp16              # halves activation memory and speeds up MPS matmuls
+val_fraction: 0.01
 save_every: 1
+log_interval: 50
 
 # data configuration
 data_dir: wikipedia/data
-num_workers: 4        # use a few workers to speed up loading many articles
+num_workers: 4
 
 # weights directory
 weights_dir: wikipedia/weights
