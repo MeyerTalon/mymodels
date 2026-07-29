@@ -2,7 +2,6 @@
 # model configuration — tuned to train on Apple silicon with ~24GB unified memory
 model_name: wikipedia_medium
 number_of_articles: 10000
-use_local_articles: True
 
 # tokenizer
 vocab_size: 16000
@@ -32,6 +31,13 @@ log_interval: 50
 
 # data configuration
 data_dir: wikipedia/data
+dataset_name: wikimedia/wikipedia
+dataset_config: 20231101.en
+dataset_split: train
+dataset_revision: e6057dc557255a03c9c3c47ceab0eb44353b1bc5
+dataset_seed: 42
+shuffle_buffer_size: 10000
+dataset_cache_only: False    # require a compatible local snapshot when True
 num_workers: 4
 
 # weights directory

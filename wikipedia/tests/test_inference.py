@@ -1,5 +1,7 @@
 """tests for checkpoint loading and text generation."""
 
+from pathlib import Path
+
 import pytest
 import torch
 
@@ -16,15 +18,12 @@ TINY_CONFIG = {
 }
 
 
-def test_load_model_and_generate(tmp_path):
-    data_dir = tmp_path / "data"
-    data_dir.mkdir()
-    (data_dir / "a.txt").write_text(
-        "the quick brown fox jumps over the lazy dog. " * 20, encoding="utf-8"
-    )
+def test_load_model_and_generate(tmp_path: Path) -> None:
     tok_dir = tmp_path / "tok"
     tokenizer = WikipediaBPETokenizer.train_or_load(
-        str(data_dir), str(tok_dir), vocab_size=300
+        ["the quick brown fox jumps over the lazy dog. " * 20],
+        str(tok_dir),
+        vocab_size=300,
     )
 
     model = DecoderOnlyTransformer(
@@ -56,7 +55,7 @@ def test_load_model_and_generate(tmp_path):
     assert not continuation.startswith(prompt)
 
 
-def test_load_model_missing_checkpoint_raises(tmp_path):
+def test_load_model_missing_checkpoint_raises(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError):
         load_model(
             "missing",

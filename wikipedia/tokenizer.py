@@ -6,8 +6,9 @@ Wikipedia texts. exposes a simple encode/decode interface compatible with the co
 
 from __future__ import annotations
 
+from itertools import chain
 from pathlib import Path
-from typing import List
+from typing import Iterable, List
 
 from tokenizers import ByteLevelBPETokenizer
 
@@ -15,10 +16,9 @@ from tokenizers import ByteLevelBPETokenizer
 class WikipediaBPETokenizer:
     """wrapper around Hugging Face's ByteLevelBPETokenizer for this project.
 
-    this tokenizer can be trained from a directory of `.txt` files or loaded
+    this tokenizer can be trained from an iterable of article texts or loaded
     from previously saved vocab/merges files. it exposes a minimal interface
-    compatible with the rest of the codebase: `encode`, `decode`, and
-    `vocab_size`.
+    compatible with the rest of the codebase.
     """
 
     #: special tokens reserved at the start of the vocabulary, in id order.
@@ -48,7 +48,7 @@ class WikipediaBPETokenizer:
     @classmethod
     def train_or_load(
         cls,
-        data_dir: str,
+        texts: Iterable[str],
         tokenizer_dir: str,
         vocab_size: int = 8000,
         min_frequency: int = 2,
@@ -56,11 +56,11 @@ class WikipediaBPETokenizer:
         """trains a new tokenizer or loads an existing one from disk.
 
         if `vocab.json` and `merges.txt` exist in `tokenizer_dir`, they are
-        loaded. otherwise, a new ByteLevel BPE tokenizer is trained on all
-        `.txt` files found in `data_dir` and saved to `tokenizer_dir`.
+        loaded. otherwise, a new ByteLevel BPE tokenizer is trained from
+        ``texts`` and saved to `tokenizer_dir`.
 
         Args:
-            data_dir: directory containing `.txt` article files.
+            texts: article texts used when tokenizer files do not exist.
             tokenizer_dir: directory to store/load vocab and merges files.
             vocab_size: target vocabulary size.
             min_frequency: minimum token frequency to be included in the vocab.
@@ -73,15 +73,17 @@ class WikipediaBPETokenizer:
             return cls.load(tokenizer_dir)
 
         tok_dir.mkdir(parents=True, exist_ok=True)
-        files = [str(p) for p in Path(data_dir).glob("*.txt")]
-        if not files:
+        training_texts = (text for text in texts if text)
+        try:
+            first_text = next(training_texts)
+        except StopIteration as exc:
             raise ValueError(
-                f"No .txt files found in {data_dir} to train the tokenizer."
-            )
+                "at least one text is required to train the tokenizer."
+            ) from exc
 
         tokenizer = ByteLevelBPETokenizer()
-        tokenizer.train(
-            files=files,
+        tokenizer.train_from_iterator(
+            chain([first_text], training_texts),
             vocab_size=vocab_size,
             min_frequency=min_frequency,
             special_tokens=cls.SPECIAL_TOKENS,

@@ -1,12 +1,15 @@
 """tests for the training loop."""
 
 import math
+from typing import Any, Dict, List, Optional, Tuple
 
+import pytest
 import torch
 import torch.nn as nn
 from torch.optim import Adam
 from torch.utils.data import DataLoader, TensorDataset
 
+import wikipedia.training as training_module
 from wikipedia.architecture import DecoderOnlyTransformer
 from wikipedia.training import Trainer
 
@@ -36,7 +39,7 @@ def _cpu_trainer() -> Trainer:
     return trainer
 
 
-def test_train_epoch_returns_finite_loss():
+def test_train_epoch_returns_finite_loss() -> None:
     trainer = _cpu_trainer()
     inputs = torch.randint(1, 32, (4, 8))
     targets = torch.randint(1, 32, (4, 8))
@@ -47,7 +50,50 @@ def test_train_epoch_returns_finite_loss():
     assert loss > 0
 
 
-def test_evaluate_returns_none_without_val_loader():
+def test_evaluate_returns_none_without_val_loader() -> None:
     trainer = _cpu_trainer()
     trainer.val_loader = None
     assert trainer.evaluate() is None
+
+
+def test_setup_data_reuses_one_text_corpus(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    texts = ["alpha", "beta"]
+    captured: Dict[str, Dict[str, Any]] = {}
+
+    def fake_load_wikipedia_texts(**kwargs: Any) -> List[str]:
+        """returns one synthetic corpus and records acquisition settings."""
+        captured["load"] = kwargs
+        return texts
+
+    def fake_train_or_load(**kwargs: Any) -> object:
+        """returns a tokenizer stand-in and records its corpus."""
+        captured["tokenizer"] = kwargs
+        return object()
+
+    def fake_create_dataloaders(
+        **kwargs: Any,
+    ) -> Tuple[List[int], Optional[object]]:
+        """returns a loader stand-in and records its corpus."""
+        captured["loaders"] = kwargs
+        return [1], None
+
+    monkeypatch.setattr(
+        training_module, "load_wikipedia_texts", fake_load_wikipedia_texts
+    )
+    monkeypatch.setattr(
+        training_module.WikipediaBPETokenizer,
+        "train_or_load",
+        staticmethod(fake_train_or_load),
+    )
+    monkeypatch.setattr(
+        training_module, "create_dataloaders", fake_create_dataloaders
+    )
+
+    trainer = Trainer.__new__(Trainer)
+    trainer.config = {"number_of_articles": 2}
+    trainer._setup_data()
+
+    assert captured["tokenizer"]["texts"] is texts
+    assert captured["loaders"]["texts"] is texts

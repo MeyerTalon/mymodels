@@ -1,6 +1,6 @@
 # Wikipedia Sentence Completion Model
 
-A decoder-only transformer model trained on Wikipedia articles for sentence completion tasks. This implementation uses PyTorch's native transformer modules and includes a complete pipeline for data downloading, training, and inference.
+A decoder-only transformer model trained on cleaned articles from the Hugging Face `wikimedia/wikipedia` dataset for sentence completion tasks. This implementation uses PyTorch's native transformer modules and includes a complete pipeline for reproducible dataset sampling, training, and inference.
 
 ## Overview
 
@@ -12,6 +12,7 @@ This project implements a GPT-style decoder-only transformer that learns to comp
 |--------|------------|----------|
 | `wikipedia_small` | ~5.3M (5,273,088) | `d_model=256`, `n_layers=4`, `vocab_size=8000`, `max_seq_len=256` |
 | `wikipedia_medium` | ~33.7M (33,674,240) | `d_model=512`, `n_layers=8`, `vocab_size=16000`, `max_seq_len=512` |
+| `wikipedia_large` | ~110.4M (110,418,432) | `d_model=768`, `n_layers=12`, `vocab_size=32000`, `max_seq_len=1024` |
 
 Counts include weight-tied token embeddings and output projection. See the first line of each config in `wikipedia/configs/` for the canonical number.
 
@@ -26,7 +27,7 @@ docs/
 wikipedia/
 ├── __init__.py            # Marks this directory as a Python package
 ├── architecture.py        # Model architecture definition
-├── data.py                # Data downloading and preprocessing
+├── data.py                # Dataset acquisition, caching, and preprocessing
 ├── tokenizer.py           # Byte-level BPE tokenizer wrapper
 ├── training.py            # Training script and Trainer class
 ├── inference.py           # Inference script for text generation
@@ -34,7 +35,7 @@ wikipedia/
 ├── utils.py               # Shared device selection and path resolution
 ├── configs/               # Configuration YAML files
 ├── tests/                 # Lightweight pytest tests
-├── data/                  # Downloaded Wikipedia articles (gitignored, created automatically)
+├── data/                  # Cached article snapshot and manifest (gitignored)
 ├── tokenizer_files/       # Trained tokenizer vocab/merges (gitignored, created automatically)
 ├── weights/               # Saved model checkpoints (gitignored, created automatically)
 └── reports/               # Per-run train/val loss charts (gitignored, created automatically)
@@ -59,24 +60,22 @@ Contains the model architecture:
 
 Byte-level BPE tokenization:
 
-- **`WikipediaBPETokenizer`**: Wrapper around Hugging Face's `ByteLevelBPETokenizer` exposing `encode`, `decode`, `vocab_size`, and the special-token ids (`pad_id`, `bos_id`, `eos_id`, `unk_id`). Trained on the downloaded articles the first time you train (`train_or_load`, with `vocab_size`/`min_frequency` from config) and saved to `wikipedia/tokenizer_files/`.
+- **`WikipediaBPETokenizer`**: Wrapper around Hugging Face's `ByteLevelBPETokenizer` exposing `encode`, `decode`, `vocab_size`, and the special-token ids (`pad_id`, `bos_id`, `eos_id`, `unk_id`). Trained from the selected article texts the first time you train (`train_or_load`, with `vocab_size`/`min_frequency` from config) and saved to `wikipedia/tokenizer_files/`.
 
 ### `wikipedia/data.py`
 
-Handles Wikipedia article downloading and data preprocessing:
+Handles Wikipedia dataset acquisition, snapshot reuse, and preprocessing:
 
 - **`WikipediaDataset`**: PyTorch Dataset over a single packed token stream, cut into contiguous `block_size`-length blocks (`input_ids`, next-token `target_ids`) — no padding
-- **`sanitize_filename()`**: Converts article titles to valid filenames (lowercase, underscores, alphanumeric only)
-- **`extract_article_text()`**: Strips the metadata header from a downloaded article file, keeping only the body
-- **`download_wikipedia_articles()`**: Downloads n randomly selected Wikipedia articles and saves them to disk
-- **`load_articles_from_dir()`**: Loads and cleans article bodies from saved files
-- **`gather_texts()`**: Collects cleaned article texts, downloading them or sampling local ones
+- **`load_wikipedia_texts()`**: Reuses a compatible local snapshot or streams a deterministic bounded sample from `wikimedia/wikipedia`
 - **`build_token_stream()`**: Tokenizes and concatenates texts into one stream, separated by the end-of-sequence id
 - **`create_dataloaders()`**: Builds packed train (and optional validation) DataLoaders, splitting the token stream at the token level
 
 **Features:**
-- Automatically downloads random Wikipedia articles (or reuses local ones offline)
-- Strips metadata headers so only article text is trained on
+- Streams only the configured number of articles instead of downloading the full English dataset
+- Filters empty articles and persists the selected `id`, `url`, `title`, and `text` fields as JSONL
+- Records source, revision, seed, shuffle settings, count, and checksum in a manifest
+- Reuses a compatible snapshot without network access; `dataset_cache_only: True` enforces offline operation
 - **Packs the whole corpus into contiguous fixed-length blocks** so every token contributes a training signal (no wasted padding), the standard efficient setup for causal language modeling
 - Inserts an end-of-sequence separator between articles so the model learns document boundaries
 
@@ -86,7 +85,7 @@ Training pipeline and Trainer class:
 
 - **`Trainer`**: Main training class that handles:
   - Configuration loading from YAML
-  - Data setup and downloading
+  - Dataset acquisition and cache reuse
   - Model initialization
   - Mixed-precision training loop (fp16 autocast on MPS/CUDA) with gradient accumulation and progress tracking
   - Validation on a held-out token region and perplexity reporting
@@ -99,7 +98,7 @@ uv run python -m wikipedia.training wikipedia/configs/wikipedia_small.yaml
 ```
 
 **Features:**
-- Automatic data downloading if directory is empty (or offline reuse of local articles)
+- Automatic bounded streaming on first use and local snapshot reuse afterward
 - Mixed precision (fp16 autocast) and gradient accumulation, tuned for Apple silicon on ~24GB of unified memory
 - `AdamW` with decoupled weight decay applied only to weight matrices (not biases, norms, or embeddings)
 - Gradient clipping for training stability
@@ -158,7 +157,7 @@ Lightweight `pytest` tests for the critical functions (tiny model dims, no netwo
 uv run pytest wikipedia/tests
 ```
 
-### `wikipedia/configs/wikipedia_small.yaml`, `wikipedia/configs/wikipedia_medium.yaml`
+### `wikipedia/configs/`
 
 Configuration files defining model and training parameters:
 
@@ -189,9 +188,15 @@ Configuration files defining model and training parameters:
 - `log_interval`: Progress-bar update interval in steps (default: 50)
 
 **Data:**
-- `number_of_articles`: Number of Wikipedia articles to download or sample (default: 5)
-- `use_local_articles`: When True, reuse already-downloaded articles instead of downloading (no network needed)
-- `data_dir`: Directory to save/load articles (default: wikipedia/data)
+- `number_of_articles`: Number of non-empty articles in the selected sample (default: 5)
+- `data_dir`: Directory for the JSONL snapshot and manifest (default: `wikipedia/data`)
+- `dataset_name`: Hugging Face dataset repository (default: `wikimedia/wikipedia`)
+- `dataset_config`: Dated language subset (default: `20231101.en`)
+- `dataset_split`: Dataset split (default: `train`)
+- `dataset_revision`: Pinned Hugging Face repository revision
+- `dataset_seed`: Deterministic approximate-shuffle seed (default: 42)
+- `shuffle_buffer_size`: Number of streamed rows used for approximate shuffling (default: 10000)
+- `dataset_cache_only`: When `True`, prohibit Hub access and require a compatible local snapshot (default: `False`)
 - `num_workers`: Number of DataLoader workers (default: 0)
 
 **Paths:**
@@ -220,6 +225,13 @@ uv sync
 ```yaml
 model_name: my_model
 number_of_articles: 10
+dataset_name: wikimedia/wikipedia
+dataset_config: 20231101.en
+dataset_split: train
+dataset_revision: e6057dc557255a03c9c3c47ceab0eb44353b1bc5
+dataset_seed: 42
+shuffle_buffer_size: 10000
+dataset_cache_only: False
 d_model: 256
 n_heads: 4
 n_layers: 4
@@ -233,7 +245,7 @@ uv run python -m wikipedia.training wikipedia/configs/wikipedia_small.yaml
 ```
 
 The script will:
-- Download Wikipedia articles (or reuse local ones when `use_local_articles` is True)
+- Stream a bounded article sample from Hugging Face or reuse a compatible snapshot
 - Train or load the BPE tokenizer in `wikipedia/tokenizer_files/`
 - Create the model according to config
 - Train for the specified number of epochs
@@ -293,10 +305,15 @@ The implementation leverages PyTorch's native `nn.TransformerEncoder` with a cau
 
 ## Data format
 
-Wikipedia articles are downloaded and saved as plain text files in `wikipedia/data/`:
-- Filenames are sanitized article titles (lowercase, underscores, alphanumeric only)
-- Each file starts with a short metadata header (title and URL) followed by the full article text
-- For training, the header is stripped and every article is tokenized, concatenated into one stream (separated by an end-of-sequence token), and cut into contiguous `max_seq_len`-length blocks — no truncation to a single window and no padding
+The source is the cleaned English `20231101.en` subset of [`wikimedia/wikipedia`](https://huggingface.co/datasets/wikimedia/wikipedia), pinned to the revision in the config. The full subset is about 6.4 million articles, 11.6 GB compressed, and 20.2 GB prepared, so acquisition uses streaming and retains only `number_of_articles`. Snapshot size depends on the selected article lengths and is typically far smaller than the full subset.
+
+`wikipedia/data/` contains:
+- `wikipedia_articles.jsonl`: One JSON object per selected article with `id`, `url`, `title`, and `text`
+- `wikipedia_articles.manifest.json`: Dataset identity, revision, sampling settings, article count, and snapshot SHA-256
+
+Streaming shuffle is deterministic for a pinned revision and seed but is an approximate buffer shuffle, not a uniform permutation of all 6.4 million rows. A larger compatible snapshot can serve a smaller request by using its prefix. Changing the source, revision, seed, or shuffle buffer requires a new snapshot.
+
+For training, every article is tokenized, concatenated into one stream (separated by an end-of-sequence token), and cut into contiguous `max_seq_len`-length blocks — no truncation to a single window and no padding.
 
 ## Tips and best practices
 
@@ -308,8 +325,11 @@ Wikipedia articles are downloaded and saved as plain text files in `wikipedia/da
 
 ## Troubleshooting
 
-**Issue**: "No text files found in data_dir"
-- **Solution**: The data directory is empty. The training script should auto-download, but you can manually trigger it by deleting the data directory.
+**Issue**: "dataset_cache_only=True but no compatible Wikipedia snapshot exists"
+- **Solution**: Set `dataset_cache_only: False` for one network-enabled run, or restore a snapshot and manifest created with the same dataset settings.
+
+**Issue**: Hugging Face download or connection error
+- **Solution**: Confirm network access and retry. Completed compatible snapshots are reused automatically; temporary or checksum-mismatched snapshots are ignored.
 
 **Issue**: "Model checkpoint not found"
 - **Solution**: Ensure the model name matches the checkpoint filename. Check `wikipedia/weights/` for available checkpoints.
@@ -322,7 +342,7 @@ Wikipedia articles are downloaded and saved as plain text files in `wikipedia/da
 
 ## License
 
-See the LICENSE file in the project root.
+The project code is covered by the repository license. Wikimedia article text is distributed under the GNU Free Documentation License and Creative Commons Attribution-ShareAlike 3.0; see the [dataset card](https://huggingface.co/datasets/wikimedia/wikipedia) and Wikimedia terms for details.
 
 ## Contributing
 
