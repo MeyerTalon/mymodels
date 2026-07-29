@@ -51,6 +51,7 @@ uv run pytest wikipedia/tests
 ### wikipedia model
 
 see [docs/wikipedia.md](docs/wikipedia.md) for architecture, configs, and usage details.
+training streams a bounded sample from `wikimedia/wikipedia` on first use and reuses the cached local snapshot afterward.
 
 ```bash
 # train the wikipedia model

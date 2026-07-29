@@ -1,26 +1,31 @@
-"""data loading and Wikipedia article downloading module.
+"""Hugging Face Wikipedia acquisition and packed data loading.
 
-handles downloading random Wikipedia articles via the HTTP API and building the
-packed, contiguous token stream used for causal language modeling. articles are
-tokenized once, joined with an end-of-text separator, and split into fixed-length
-blocks so every token contributes a training signal (no padding waste).
+streams a bounded, deterministic article sample into a reusable local snapshot,
+then builds the packed token stream used for causal language modeling.
 """
 
+import hashlib
+import json
 import os
-import random
-import re
-import time
-from multiprocessing import Pool, cpu_count
+import tempfile
 from pathlib import Path
-from typing import Any, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, TypedDict
 
-import requests
 import torch
+from datasets import load_dataset
 from torch.utils.data import DataLoader, Dataset
 
-# separator between the metadata header and the article body written by the
-# downloader (a line of '=' characters).
-_HEADER_SEPARATOR = "=" * 80
+SNAPSHOT_FILENAME = "wikipedia_articles.jsonl"
+MANIFEST_FILENAME = "wikipedia_articles.manifest.json"
+
+
+class WikipediaArticle(TypedDict):
+    """article fields retained from the Wikimedia dataset."""
+
+    id: str
+    url: str
+    title: str
+    text: str
 
 
 class WikipediaDataset(Dataset):
@@ -73,229 +78,208 @@ class WikipediaDataset(Dataset):
         return chunk[:-1], chunk[1:]
 
 
-def sanitize_filename(title: str) -> str:
-    """converts a Wikipedia article title to a safe filename.
-
-    the result is lowercase, uses underscores between words, and strips all
-    non-alphanumeric characters before use.
-
-    Args:
-        title: original article title.
-
-    Returns:
-        sanitized filename (without extension).
-    """
-    title = title.lower()
-    title = re.sub(r"[^a-z0-9]+", "_", title)
-    title = title.strip("_")
-    return title
-
-
-def extract_article_text(raw: str) -> str:
-    """strips the downloader metadata header from a raw article file.
-
-    downloaded files start with ``Title:``/``URL:`` lines followed by a line of
-    ``=`` characters and a blank line; only the body after that separator is
-    useful for language modeling. files without the header are returned as-is.
-
-    Args:
-        raw: full contents of an article ``.txt`` file.
-
-    Returns:
-        the article body with surrounding whitespace stripped.
-    """
-    marker_index = raw.find(_HEADER_SEPARATOR)
-    if marker_index != -1:
-        newline_index = raw.find("\n", marker_index)
-        if newline_index != -1:
-            return raw[newline_index + 1 :].strip()
-    return raw.strip()
-
-
-def download_wikipedia_articles(
-    n: int,
-    save_dir: str = "wikipedia/data",
-    delay: float = 0.0,
-) -> List[Tuple[str, str]]:
-    """downloads ``n`` random Wikipedia articles via the public HTTP API.
-
-    articles are fetched using the official Wikipedia API, saved as text files,
-    and basic metadata (title and URL) is written at the top of each file.
-    downloading is parallelized with multiprocessing for maximum throughput.
-
-    Args:
-        n: number of articles to download.
-        save_dir: directory to which article text files will be written.
-        delay: delay in seconds between requests per worker, to be polite.
-
-    Returns:
-        list of ``(title, filepath)`` tuples for successfully downloaded articles.
-    """
-    Path(save_dir).mkdir(parents=True, exist_ok=True)
-
-    api_url = "https://en.wikipedia.org/w/api.php"
-    downloaded: List[Tuple[str, str]] = []
-
-    # prepare arguments for worker processes
-    args = [(i, api_url, save_dir, delay) for i in range(n)]
-    num_procs = min(cpu_count() or 2, 8)
-
-    print(f"Fetching {n} random Wikipedia articles using {num_procs} processes...")
-
-    with Pool(processes=num_procs) as pool:
-        for result in pool.imap_unordered(_download_single_article, args):
-            if result is not None:
-                downloaded.append(result)
-
-    print(f"Successfully downloaded {len(downloaded)} articles")
-    return downloaded
-
-
-def _download_single_article(
-    args: Tuple[int, str, str, float],
-) -> Optional[Tuple[str, str]]:
-    """worker function to download a single random Wikipedia article.
-
-    Args:
-        args: tuple of (index, api_url, save_dir, delay_seconds).
-
-    Returns:
-        (title, filepath) tuple if successful, otherwise None.
-    """
-    index, api_url, save_dir, delay = args
-
-    params = {
-        "action": "query",
-        "format": "json",
-        "list": "random",
-        "rnnamespace": 0,  # main namespace only
-        "rnlimit": 1,
-    }
-
-    headers = {
-        "User-Agent": "WikipediaScraperBot/1.0 (Educational/Research purposes)"
-    }
-
-    try:
-        # request a random article
-        response = requests.get(api_url, params=params, headers=headers, timeout=10)
-        response.raise_for_status()
-        data = response.json()
-
-        page = data["query"]["random"][0]
-        page_id = page["id"]
-        page_title = page["title"]
-
-        # fetch the article content
-        content_params = {
-            "action": "query",
-            "format": "json",
-            "pageids": page_id,
-            "prop": "extracts",
-            "explaintext": True,  # plain text without HTML
-        }
-
-        content_response = requests.get(
-            api_url, params=content_params, headers=headers, timeout=10
-        )
-        content_response.raise_for_status()
-        content_data = content_response.json()
-
-        article_text = content_data["query"]["pages"][str(page_id)].get("extract", "")
-
-        # sanitize filename (limit length to avoid OS issues)
-        base_name = sanitize_filename(page_title) or f"article_{page_id}"
-        base_name = base_name[:100]
-        filename = f"{base_name}.txt"
-        filepath = os.path.join(save_dir, filename)
-
-        # save to file with simple metadata header
-        with open(filepath, "w", encoding="utf-8") as f:
-            f.write(f"Title: {page_title}\n")
-            f.write(f"URL: https://en.wikipedia.org/?curid={page_id}\n")
-            f.write(_HEADER_SEPARATOR + "\n\n")
-            f.write(article_text)
-
-        print(f"[{index + 1}] Downloaded: {page_title}")
-
-        # optional per-worker delay
-        if delay > 0:
-            time.sleep(delay)
-
-        return page_title, filepath
-
-    except requests.exceptions.RequestException as exc:
-        print(f"[{index + 1}] Error fetching article: {exc}")
-        return None
-    except Exception as exc:  # pragma: no cover - defensive logging
-        print(f"[{index + 1}] Unexpected error: {exc}")
-        return None
-
-
-def load_articles_from_dir(data_dir: str) -> List[str]:
-    """loads and cleans all article bodies from a directory.
-
-    the metadata header is stripped from each file so only the article text is
-    returned.
-
-    Args:
-        data_dir: directory containing ``.txt`` article files.
-
-    Returns:
-        list of cleaned article bodies as strings.
-    """
-    texts: List[str] = []
-    for filename in sorted(os.listdir(data_dir)):
-        if filename.endswith(".txt"):
-            filepath = os.path.join(data_dir, filename)
-            with open(filepath, "r", encoding="utf-8") as f:
-                body = extract_article_text(f.read())
-            if body:
-                texts.append(body)
-    return texts
-
-
-def gather_texts(
+def load_wikipedia_texts(
     data_dir: str,
     n_articles: int,
-    use_local_articles: bool,
+    dataset_name: str = "wikimedia/wikipedia",
+    dataset_config: str = "20231101.en",
+    dataset_split: str = "train",
+    dataset_revision: Optional[str] = None,
+    dataset_seed: int = 42,
+    shuffle_buffer_size: int = 10_000,
+    dataset_cache_only: bool = False,
 ) -> List[str]:
-    """collects cleaned article texts, downloading them if requested.
+    """loads article texts from a compatible snapshot or the Hugging Face Hub.
 
     Args:
-        data_dir: directory where article text files are stored or read from.
-        n_articles: number of articles to download or sample.
-        use_local_articles: when True, sample from already-downloaded articles
-            instead of hitting the network.
+        data_dir: directory containing the application-owned corpus snapshot.
+        n_articles: number of non-empty articles to load.
+        dataset_name: Hugging Face dataset repository.
+        dataset_config: dated language configuration.
+        dataset_split: dataset split to stream.
+        dataset_revision: pinned Hub revision.
+        dataset_seed: seed for deterministic streaming shuffle.
+        shuffle_buffer_size: number of rows used for approximate shuffle.
+        dataset_cache_only: when True, prohibit Hub access.
 
     Returns:
-        list of cleaned article bodies.
+        selected article texts.
 
     Raises:
-        ValueError: if no readable article texts are available.
+        ValueError: if settings are invalid, a cache-only snapshot is unavailable,
+            or the streamed dataset does not contain enough non-empty articles.
     """
-    os.makedirs(data_dir, exist_ok=True)
+    if n_articles <= 0:
+        raise ValueError("n_articles must be greater than zero.")
+    if shuffle_buffer_size <= 0:
+        raise ValueError("shuffle_buffer_size must be greater than zero.")
 
-    if use_local_articles:
-        all_texts = load_articles_from_dir(data_dir)
-        if not all_texts:
-            raise ValueError(
-                "use_local_articles=True but no .txt files were found in "
-                f"{data_dir}. Please download articles first."
-            )
-        if len(all_texts) > n_articles:
-            return random.sample(all_texts, n_articles)
-        return all_texts
+    snapshot_dir = Path(data_dir)
+    snapshot_dir.mkdir(parents=True, exist_ok=True)
+    expected = _snapshot_metadata(
+        dataset_name,
+        dataset_config,
+        dataset_split,
+        dataset_revision,
+        dataset_seed,
+        shuffle_buffer_size,
+    )
+    cached = _load_snapshot(snapshot_dir, expected, n_articles)
+    if cached is not None:
+        print(f"Loaded {len(cached)} articles from {snapshot_dir / SNAPSHOT_FILENAME}")
+        return [article["text"] for article in cached]
 
-    # download a fresh set; fall back to any local files if the network fails
-    download_wikipedia_articles(n_articles, save_dir=data_dir)
-    texts = load_articles_from_dir(data_dir)
-    if not texts:
+    if dataset_cache_only:
         raise ValueError(
-            "No readable article texts found in "
-            f"{data_dir}. Ensure you have network access or pre-populated .txt files."
+            "dataset_cache_only=True but no compatible Wikipedia snapshot exists "
+            f"in {data_dir}."
         )
-    return texts
+
+    print(
+        f"Streaming {n_articles} articles from "
+        f"{dataset_name}/{dataset_config}:{dataset_split}..."
+    )
+    dataset = load_dataset(
+        dataset_name,
+        dataset_config,
+        split=dataset_split,
+        revision=dataset_revision,
+        streaming=True,
+    )
+    shuffled = dataset.filter(_has_text).shuffle(
+        seed=dataset_seed,
+        buffer_size=shuffle_buffer_size,
+    )
+    articles = [_normalize_article(row) for row in shuffled.take(n_articles)]
+    if len(articles) != n_articles:
+        raise ValueError(
+            f"requested {n_articles} articles but only found {len(articles)} "
+            "non-empty rows."
+        )
+
+    _write_snapshot(snapshot_dir, articles, expected)
+    print(f"Cached {len(articles)} articles in {snapshot_dir / SNAPSHOT_FILENAME}")
+    return [article["text"] for article in articles]
+
+
+def _has_text(row: Dict[str, Any]) -> bool:
+    """returns whether a dataset row contains non-empty article text."""
+    return bool(str(row.get("text", "")).strip())
+
+
+def _normalize_article(row: Dict[str, Any]) -> WikipediaArticle:
+    """normalizes one Hugging Face row for stable JSON serialization."""
+    return {
+        "id": str(row.get("id", "")),
+        "url": str(row.get("url", "")),
+        "title": str(row.get("title", "")),
+        "text": str(row["text"]).strip(),
+    }
+
+
+def _snapshot_metadata(
+    dataset_name: str,
+    dataset_config: str,
+    dataset_split: str,
+    dataset_revision: Optional[str],
+    dataset_seed: int,
+    shuffle_buffer_size: int,
+) -> Dict[str, Any]:
+    """builds the settings that identify a reproducible corpus snapshot."""
+    return {
+        "dataset_name": dataset_name,
+        "dataset_config": dataset_config,
+        "dataset_split": dataset_split,
+        "dataset_revision": dataset_revision,
+        "dataset_seed": dataset_seed,
+        "shuffle_buffer_size": shuffle_buffer_size,
+    }
+
+
+def _load_snapshot(
+    snapshot_dir: Path,
+    expected: Dict[str, Any],
+    n_articles: int,
+) -> Optional[List[WikipediaArticle]]:
+    """loads a compatible, integrity-checked local snapshot."""
+    snapshot_path = snapshot_dir / SNAPSHOT_FILENAME
+    manifest_path = snapshot_dir / MANIFEST_FILENAME
+    if not snapshot_path.exists() or not manifest_path.exists():
+        return None
+
+    try:
+        with manifest_path.open("r", encoding="utf-8") as file:
+            manifest = json.load(file)
+        if any(manifest.get(key) != value for key, value in expected.items()):
+            return None
+        if int(manifest.get("article_count", 0)) < n_articles:
+            return None
+        if _file_sha256(snapshot_path) != manifest.get("sha256"):
+            return None
+
+        articles: List[WikipediaArticle] = []
+        with snapshot_path.open("r", encoding="utf-8") as file:
+            for line in file:
+                if len(articles) == n_articles:
+                    break
+                articles.append(_normalize_article(json.loads(line)))
+        return articles if len(articles) == n_articles else None
+    except (
+        AttributeError,
+        KeyError,
+        OSError,
+        TypeError,
+        ValueError,
+        json.JSONDecodeError,
+    ):
+        return None
+
+
+def _write_snapshot(
+    snapshot_dir: Path,
+    articles: List[WikipediaArticle],
+    metadata: Dict[str, Any],
+) -> None:
+    """atomically writes an integrity-checked JSONL snapshot and manifest."""
+    snapshot_path = snapshot_dir / SNAPSHOT_FILENAME
+    manifest_path = snapshot_dir / MANIFEST_FILENAME
+    snapshot_tmp = _temporary_path(snapshot_dir, SNAPSHOT_FILENAME)
+    manifest_tmp = _temporary_path(snapshot_dir, MANIFEST_FILENAME)
+    try:
+        with snapshot_tmp.open("w", encoding="utf-8") as file:
+            for article in articles:
+                file.write(json.dumps(article, ensure_ascii=False) + "\n")
+
+        manifest = {
+            **metadata,
+            "article_count": len(articles),
+            "sha256": _file_sha256(snapshot_tmp),
+        }
+        with manifest_tmp.open("w", encoding="utf-8") as file:
+            json.dump(manifest, file, indent=2, sort_keys=True)
+            file.write("\n")
+
+        os.replace(snapshot_tmp, snapshot_path)
+        os.replace(manifest_tmp, manifest_path)
+    finally:
+        snapshot_tmp.unlink(missing_ok=True)
+        manifest_tmp.unlink(missing_ok=True)
+
+
+def _temporary_path(directory: Path, filename: str) -> Path:
+    """creates a closed temporary file path in the snapshot directory."""
+    descriptor, path = tempfile.mkstemp(prefix=f".{filename}.", dir=directory)
+    os.close(descriptor)
+    return Path(path)
+
+
+def _file_sha256(path: Path) -> str:
+    """returns the SHA-256 digest of a file."""
+    digest = hashlib.sha256()
+    with path.open("rb") as file:
+        for chunk in iter(lambda: file.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def build_token_stream(texts: List[str], tokenizer: Any) -> List[int]:
@@ -321,15 +305,13 @@ def build_token_stream(texts: List[str], tokenizer: Any) -> List[int]:
 
 
 def create_dataloaders(
-    data_dir: str,
+    texts: List[str],
     tokenizer: Any,
-    n_articles: int,
     block_size: int = 512,
     batch_size: int = 16,
     val_fraction: float = 0.0,
     shuffle: bool = True,
     num_workers: int = 0,
-    use_local_articles: bool = False,
 ) -> Tuple[DataLoader, Optional[DataLoader]]:
     """builds packed train (and optional validation) dataloaders.
 
@@ -337,31 +319,25 @@ def create_dataloaders(
     into a training and validation region, so the two never share blocks.
 
     Args:
-        data_dir: directory where article text files are stored or read from.
+        texts: article bodies to tokenize and pack.
         tokenizer: tokenizer instance used to encode the text.
-        n_articles: number of articles to download or sample.
         block_size: sequence length of each packed block.
         batch_size: batch size for the loaders.
         val_fraction: fraction of the token stream reserved for validation
             (``0.0`` disables the validation loader).
         shuffle: whether to shuffle the training blocks.
         num_workers: number of subprocesses for data loading.
-        use_local_articles: when True, only use already-downloaded articles.
-
     Returns:
         a ``(train_loader, val_loader)`` tuple; ``val_loader`` is ``None`` when
         ``val_fraction`` is 0 or the stream is too short to split.
     """
-    texts = gather_texts(data_dir, n_articles, use_local_articles)
     stream = build_token_stream(texts, tokenizer)
 
     val_loader: Optional[DataLoader] = None
     split = int(len(stream) * (1.0 - val_fraction)) if val_fraction > 0 else len(stream)
 
     train_dataset = WikipediaDataset(stream[:split], block_size=block_size)
-    train_loader = _make_loader(
-        train_dataset, batch_size, shuffle, num_workers
-    )
+    train_loader = _make_loader(train_dataset, batch_size, shuffle, num_workers)
 
     if val_fraction > 0 and len(stream) - split >= block_size + 1:
         val_dataset = WikipediaDataset(stream[split:], block_size=block_size)

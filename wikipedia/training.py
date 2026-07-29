@@ -20,7 +20,7 @@ from torch.optim.lr_scheduler import LambdaLR
 from tqdm import tqdm
 
 from wikipedia.architecture import DecoderOnlyTransformer
-from wikipedia.data import create_dataloaders
+from wikipedia.data import create_dataloaders, load_wikipedia_texts
 from wikipedia.reporting import TrainingReporter
 from wikipedia.tokenizer import WikipediaBPETokenizer
 from wikipedia.utils import (
@@ -82,26 +82,34 @@ class Trainer:
         """sets up the tokenizer and packed train/validation dataloaders."""
         data_dir = resolve_repo_path(self.config.get("data_dir", "wikipedia/data"))
         n_articles = self.config.get("number_of_articles", 5)
-        use_local = self.config.get("use_local_articles", False)
+        texts = load_wikipedia_texts(
+            data_dir=data_dir,
+            n_articles=n_articles,
+            dataset_name=self.config.get("dataset_name", "wikimedia/wikipedia"),
+            dataset_config=self.config.get("dataset_config", "20231101.en"),
+            dataset_split=self.config.get("dataset_split", "train"),
+            dataset_revision=self.config.get("dataset_revision"),
+            dataset_seed=self.config.get("dataset_seed", 42),
+            shuffle_buffer_size=self.config.get("shuffle_buffer_size", 10_000),
+            dataset_cache_only=self.config.get("dataset_cache_only", False),
+        )
 
         # train or load the ByteLevel BPE tokenizer over the article corpus
         self.tokenizer = WikipediaBPETokenizer.train_or_load(
-            data_dir=data_dir,
+            texts=texts,
             tokenizer_dir=TOKENIZER_DIR,
             vocab_size=self.config.get("vocab_size", 8000),
             min_frequency=self.config.get("min_frequency", 2),
         )
 
         self.train_loader, self.val_loader = create_dataloaders(
-            data_dir=data_dir,
+            texts=texts,
             tokenizer=self.tokenizer,
-            n_articles=n_articles,
             block_size=self.config.get("max_seq_len", 512),
             batch_size=self.config.get("batch_size", 16),
             val_fraction=self.config.get("val_fraction", 0.0),
             shuffle=True,
             num_workers=self.config.get("num_workers", 0),
-            use_local_articles=use_local,
         )
 
         val_batches = len(self.val_loader) if self.val_loader is not None else 0
@@ -326,7 +334,12 @@ class Trainer:
 
 
 def main() -> None:
-    """CLI entry point for training with a YAML configuration file."""
+    """CLI entry point for training with a YAML configuration file.
+
+    Command-line arguments (``sys.argv``):
+        config_path: path to the YAML training config (required, positional).
+            e.g. ``uv run python -m wikipedia.training wikipedia/configs/wikipedia_small.yaml``.
+    """
     if len(sys.argv) < 2:
         print("usage: uv run python -m wikipedia.training <config_path>")
         sys.exit(1)

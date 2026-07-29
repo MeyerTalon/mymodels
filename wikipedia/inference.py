@@ -141,7 +141,17 @@ def generate_text(
 
 
 def main() -> None:
-    """CLI entry point for generating text from a trained model."""
+    """CLI entry point for generating text from a trained model.
+
+    Command-line arguments (``argparse``):
+        --model_name: checkpoint prefix in the weights dir to load (required).
+        --prompt: beginning of the sentence to complete (required).
+        --max_length: maximum number of tokens to generate (default 100).
+        --temperature: sampling temperature, higher is more random (default 1.0).
+        --top_k: top-k sampling cutoff, 0 to disable (default 50).
+        --weights_dir: directory containing model weights
+            (default ``wikipedia/weights``).
+    """
     parser = argparse.ArgumentParser(description="Generate text using a trained model")
     parser.add_argument(
         "--model_name",

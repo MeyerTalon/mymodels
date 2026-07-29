@@ -1,6 +1,6 @@
 # Agent instructions
 
-Personal PyTorch models repo. One self-contained model package per top-level directory. Primary package today: `wikipedia/` — a GPT-style decoder-only transformer (native `nn.TransformerEncoder` with a causal mask, pre-norm + GELU + weight-tied embeddings, byte-level BPE tokenizer) for Wikipedia sentence completion. Training packs the corpus into contiguous token blocks and runs mixed-precision (fp16 autocast) with gradient accumulation, tuned for Apple silicon (MPS) on ~24GB of unified memory.
+Personal PyTorch models repo. One self-contained model package per top-level directory. Primary package today: `wikipedia/` — a GPT-style decoder-only transformer (native `nn.TransformerEncoder` with a causal mask, pre-norm + GELU + weight-tied embeddings, byte-level BPE tokenizer) for Wikipedia sentence completion. Training streams a bounded `wikimedia/wikipedia` sample into a reusable local snapshot, packs it into contiguous token blocks, and runs mixed-precision training with gradient accumulation, tuned for Apple silicon (MPS) on ~24GB of unified memory.
 
 ## Environment
 
@@ -14,7 +14,7 @@ Personal PyTorch models repo. One self-contained model package per top-level dir
 ## Commands
 
 ```bash
-# train (downloads random Wikipedia articles unless the config sets use_local_articles — needs network)
+# train (streams a bounded Hugging Face sample when no compatible snapshot exists)
 uv run python -m wikipedia.training wikipedia/configs/wikipedia_small.yaml
 
 # infer
@@ -22,7 +22,7 @@ uv run python -m wikipedia.inference --model_name wikipedia_small --prompt "The 
 # optional: --max_length --temperature --top_k --weights_dir
 ```
 
-`--model_name` is the checkpoint prefix in `wikipedia/weights/` (`wikipedia_small`, `wikipedia_medium`; `_best.pt` / `_latest.pt` / `_epoch_N.pt` suffixes).
+`--model_name` is the checkpoint prefix in `wikipedia/weights/` (`wikipedia_small`, `wikipedia_medium`, `wikipedia_large`; `_best.pt` / `_latest.pt` / `_epoch_N.pt` suffixes).
 
 ## Layout & conventions
 
@@ -37,7 +37,7 @@ uv run python -m wikipedia.inference --model_name wikipedia_small --prompt "The 
 
 ## Verification
 
-There is no linter config. Critical functions get lightweight `pytest` tests in `<pkg>/tests/` (see the `python-coding` skill); run them with `uv run pytest wikipedia/tests` (or `uv run pytest` for everything) from the repo root. Also verify changes by exercising them: a short training run (edit `num_epochs` / `number_of_articles` in a config copy, set `use_local_articles: True` to reuse downloaded data) and an inference call against existing weights.
+There is no linter config. Critical functions get lightweight `pytest` tests in `<pkg>/tests/` (see the `python-coding` skill); run them with `uv run pytest wikipedia/tests` (or `uv run pytest` for everything) from the repo root. Also verify changes by exercising them: a short training run with a tiny `number_of_articles`, a second run with `dataset_cache_only: True` to verify snapshot reuse, and an inference call against existing weights.
 
 ## Do not
 
