@@ -8,7 +8,7 @@ disable-model-invocation: true
 
 ## Creating a new skill from this template
 
-1. Copy this directory to `.claude/skills/<skill-name>/` and `.cursor/skills/<skill-name>/`; keep both copies identical.
+1. Copy this directory to `.agents/skills/<skill-name>/` (`.claude/skills` and `.cursor/skills` are symlinks to that tree — do not create separate copies).
 2. Set `name` to match the directory name exactly.
 3. Rewrite `description` carefully — it is the only text the model sees when deciding whether to trigger the skill. State what the skill does, then list triggers: `/<skill-name>`, common phrasings, and whether implicit signals count.
 4. Remove `disable-model-invocation: true` (it keeps this stub from auto-triggering) unless the skill should be invocable only by explicit `/<skill-name>`.

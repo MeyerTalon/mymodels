@@ -47,10 +47,16 @@ There is no linter config. Critical functions get lightweight `pytest` tests in 
 
 ## Skills
 
-Task-specific workflows live in `.claude/skills/` (Claude Code) and `.cursor/skills/` (Cursor). Copy `_template` to add one (it contains the checklist); keep the Claude and Cursor copies of a skill identical.
+Canonical skill store: `.agents/skills/<skill-name>/SKILL.md`. Claude Code and Cursor both resolve the same tree via directory symlinks:
+
+- `.claude/skills` → `../.agents/skills`
+- `.cursor/skills` → `../.agents/skills`
+
+Do not keep duplicate real skill trees under `.claude/` or `.cursor/`. To add a skill, copy `_template` to `.agents/skills/<skill-name>/` (it contains the checklist), then register it below and in `.cursor/rules/project.mdc` when Cursor should auto-apply it.
 
 Shared skills:
 
 - `concise` — maximally brief replies without dropping critical info; brevity applies to prose, never to code artifacts. Trigger on `/concise` or any brevity signal (including implicit). Composes with any other skill.
+- `push` — after the task (or when only `/push` is given), add/commit/push all local changes with a concise descriptive message and no agent self-credit. Trigger on `/push` or when this skill is attached.
 - `python-coding` — repo Python/PyTorch style: PEP 8, Google-style docstrings, `typing`-module generics, lowercase comments/docstrings (code files only, never Markdown docs — sole exception: the repo-root README.md is always all-lowercase), no redundant/duplicated code, lightweight `pytest` tests for critical functions, follow existing patterns. Trigger on `/python-coding` or any Python write/edit/review task (including implicit).
 - `ml-coding` — ML/DL structure and practice: model package layout mirroring `wikipedia/`, native PyTorch building blocks, config-driven training with the Trainer pattern, self-describing checkpoints, strict-eval inference, device-aware code for consumer hardware. Trigger on `/ml-coding` or any model/training/inference/data-pipeline task (including implicit). Composes with `python-coding`.
