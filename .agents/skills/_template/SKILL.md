@@ -12,7 +12,7 @@ disable-model-invocation: true
 2. Set `name` to match the directory name exactly.
 3. Rewrite `description` carefully — it is the only text the model sees when deciding whether to trigger the skill. State what the skill does, then list triggers: `/<skill-name>`, common phrasings, and whether implicit signals count.
 4. Remove `disable-model-invocation: true` (it keeps this stub from auto-triggering) unless the skill should be invocable only by explicit `/<skill-name>`.
-5. Register the skill in AGENTS.md under "Shared skills" and, if Cursor should auto-apply it, in `.cursor/rules/project.mdc`.
+5. Register the skill in AGENTS.md under "Shared skills" and, if it should auto-apply, in `.agents/rules/project.mdc` (`.claude/rules` and `.cursor/rules` are symlinks to that tree).
 6. Delete this section.
 
 ## Instructions

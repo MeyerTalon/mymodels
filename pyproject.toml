@@ -26,4 +26,4 @@ dev = [
 package = false
 
 [tool.pytest.ini_options]
-testpaths = ["wikipedia/tests"]
+testpaths = ["wikipedia/tests", "shakespeare/tests"]

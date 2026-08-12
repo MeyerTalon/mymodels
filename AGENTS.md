@@ -1,6 +1,9 @@
 # Agent instructions
 
-Personal PyTorch models repo. One self-contained model package per top-level directory. Primary package today: `wikipedia/` — a GPT-style decoder-only transformer (native `nn.TransformerEncoder` with a causal mask, pre-norm + GELU + weight-tied embeddings, byte-level BPE tokenizer) for Wikipedia sentence completion. Training streams a bounded `wikimedia/wikipedia` sample into a reusable local snapshot, packs it into contiguous token blocks, and runs mixed-precision training with gradient accumulation, tuned for Apple silicon (MPS) on ~24GB of unified memory.
+Personal PyTorch models repo. One self-contained model package per top-level directory. Packages today:
+
+- `wikipedia/` — a GPT-style decoder-only transformer (native `nn.TransformerEncoder` with a causal mask, pre-norm + GELU + weight-tied embeddings, byte-level BPE tokenizer) for Wikipedia sentence completion. Training streams a bounded `wikimedia/wikipedia` sample into a reusable local snapshot, packs it into contiguous token blocks, and runs mixed-precision training with gradient accumulation, tuned for Apple silicon (MPS) on ~24GB of unified memory.
+- `shakespeare/` — the same architecture trained from scratch on the Project Gutenberg complete works of Shakespeare. Training downloads ebook #100 into a reusable local snapshot (split into plays/poems), packs tokens the same way, and exposes matching train/infer CLIs.
 
 ## Environment
 
@@ -9,20 +12,26 @@ Personal PyTorch models repo. One self-contained model package per top-level dir
 - Use `uv add <package>` for runtime dependencies, `uv add --dev <package>` for development dependencies, and the corresponding `uv remove` commands
 - Run Python tools and scripts through `uv run`; uv automatically keeps the environment synchronized
 - Runs on consumer hardware; device is auto-selected MPS → CUDA → CPU
-- Run all commands from the repo root — scripts default to repo-root-relative paths like `wikipedia/weights`
+- Run all commands from the repo root — scripts default to repo-root-relative paths like `wikipedia/weights` or `shakespeare/weights`
 
 ## Commands
 
 ```bash
-# train (streams a bounded Hugging Face sample when no compatible snapshot exists)
+# train wikipedia (streams a bounded Hugging Face sample when no compatible snapshot exists)
 uv run python -m wikipedia.training wikipedia/configs/wikipedia_small.yaml
 
-# infer
+# infer wikipedia
 uv run python -m wikipedia.inference --model_name wikipedia_small --prompt "The history of"
 # optional: --max_length --temperature --top_k --weights_dir
+
+# train shakespeare (downloads Project Gutenberg complete works when no compatible snapshot exists)
+uv run python -m shakespeare.training shakespeare/configs/shakespeare_small.yaml
+
+# infer shakespeare
+uv run python -m shakespeare.inference --model_name shakespeare_small --prompt "To be, or not to be"
 ```
 
-`--model_name` is the checkpoint prefix in `wikipedia/weights/` (`wikipedia_small`, `wikipedia_medium`, `wikipedia_large`; `_best.pt` / `_latest.pt` / `_epoch_N.pt` suffixes).
+`--model_name` is the checkpoint prefix in `<pkg>/weights/` (e.g. `wikipedia_small`, `shakespeare_small`; `_best.pt` / `_latest.pt` / `_epoch_N.pt` suffixes).
 
 ## Layout & conventions
 
@@ -37,7 +46,7 @@ uv run python -m wikipedia.inference --model_name wikipedia_small --prompt "The 
 
 ## Verification
 
-There is no linter config. Critical functions get lightweight `pytest` tests in `<pkg>/tests/` (see the `python-coding` skill); run them with `uv run pytest wikipedia/tests` (or `uv run pytest` for everything) from the repo root. Also verify changes by exercising them: a short training run with a tiny `number_of_articles`, a second run with `dataset_cache_only: True` to verify snapshot reuse, and an inference call against existing weights.
+There is no linter config. Critical functions get lightweight `pytest` tests in `<pkg>/tests/` (see the `python-coding` skill); run them with `uv run pytest wikipedia/tests`, `uv run pytest shakespeare/tests`, or `uv run pytest` for everything from the repo root. Also verify changes by exercising them: a short training run with a tiny corpus (`number_of_articles` / `max_works`), a second run with `dataset_cache_only: True` to verify snapshot reuse, and an inference call against existing weights.
 
 ## Do not
 
@@ -45,14 +54,21 @@ There is no linter config. Critical functions get lightweight `pytest` tests in 
 - Commit anything under the gitignored artifact directories
 - Expand scope beyond the asked change
 
-## Skills
+## Skills & rules
 
-Canonical skill store: `.agents/skills/<skill-name>/SKILL.md`. Claude Code and Cursor both resolve the same tree via directory symlinks:
+`.agents/` is the canonical store for agent skills and Cursor-style rules. Claude Code and Cursor resolve the same trees via directory symlinks — do not keep duplicate real copies under `.claude/` or `.cursor/`.
+
+**Skills** live in `.agents/skills/<skill-name>/SKILL.md`:
 
 - `.claude/skills` → `../.agents/skills`
 - `.cursor/skills` → `../.agents/skills`
 
-Do not keep duplicate real skill trees under `.claude/` or `.cursor/`. To add a skill, copy `_template` to `.agents/skills/<skill-name>/` (it contains the checklist), then register it below and in `.cursor/rules/project.mdc` when Cursor should auto-apply it.
+**Rules** live in `.agents/rules/` (e.g. `project.mdc`):
+
+- `.claude/rules` → `../.agents/rules`
+- `.cursor/rules` → `../.agents/rules`
+
+To add a skill, copy `_template` to `.agents/skills/<skill-name>/` (it contains the checklist), then register it below and in `.agents/rules/project.mdc` when it should auto-apply. To add a rule, put the `.mdc` file only under `.agents/rules/` — the symlinks expose it to both tools.
 
 Shared skills:
 

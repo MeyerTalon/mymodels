@@ -48,6 +48,11 @@ uv run pytest
 uv run pytest wikipedia/tests
 ```
 
+```bash
+# run only the shakespeare tests
+uv run pytest shakespeare/tests
+```
+
 ### wikipedia model
 
 see [docs/wikipedia.md](docs/wikipedia.md) for architecture, configs, and usage details.
@@ -61,5 +66,20 @@ uv run python -m wikipedia.training wikipedia/configs/wikipedia_small.yaml
 ```bash
 # generate text with trained weights
 uv run python -m wikipedia.inference --model_name wikipedia_small --prompt "the history of"
+```
+
+### shakespeare model
+
+see [docs/shakespeare.md](docs/shakespeare.md) for architecture, configs, and usage details.
+training downloads the project gutenberg complete works on first use and reuses the cached local snapshot afterward.
+
+```bash
+# train the shakespeare model
+uv run python -m shakespeare.training shakespeare/configs/shakespeare_small.yaml
+```
+
+```bash
+# generate text with trained weights
+uv run python -m shakespeare.inference --model_name shakespeare_small --prompt "to be, or not to be"
 ```
 

@@ -212,6 +212,12 @@ wikipedia/weights/
 wikipedia/tokenizer_files/
 # wikipedia/reports/
 
+# Shakespeare
+shakespeare/data/
+shakespeare/weights/
+shakespeare/tokenizer_files/
+# shakespeare/reports/
+
 # macOS
 .DS_Store
 **/.DS_Store
