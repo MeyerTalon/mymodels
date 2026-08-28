@@ -14,6 +14,7 @@ dependencies = [
     "ruff>=0.15.22",
     "tokenizers>=0.22.1",
     "torch>=2.9.1",
+    "torchvision>=0.28.0",
     "tqdm>=4.67.1",
 ]
 
@@ -26,4 +27,4 @@ dev = [
 package = false
 
 [tool.pytest.ini_options]
-testpaths = ["wikipedia/tests", "shakespeare/tests"]
+testpaths = ["wikipedia/tests", "shakespeare/tests", "mnist/tests", "western/tests", "translation/tests"]

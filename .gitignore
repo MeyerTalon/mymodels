@@ -218,6 +218,23 @@ shakespeare/weights/
 shakespeare/tokenizer_files/
 # shakespeare/reports/
 
+# MNIST
+mnist/data/
+mnist/weights/
+# mnist/reports/
+
+# Western
+western/data/
+western/weights/
+western/tokenizer_files/
+# western/reports/
+
+# Translation
+translation/data/
+translation/weights/
+translation/tokenizer_files/
+# translation/reports/
+
 # macOS
 .DS_Store
 **/.DS_Store
