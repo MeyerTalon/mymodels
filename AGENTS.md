@@ -176,3 +176,9 @@ Each model package's `training.py` and `inference.py` stay thin: parse args, cal
 - Strings use single quotes (enforced by `ruff format`).
 - The repo-root `README.md` is always written entirely in lowercase.
 - Docs can lag code; when they disagree, trust the code and fix the doc in the same change.
+
+## Cursor Cloud specific instructions
+
+There is no dev server. Prove the environment with `mise run check`, then a tiny train and infer on CPU. `select_device()` uses CPU here, and CPU training stays float32 even when a config requests `bf16`.
+
+`mise run setup` follows `uv.lock`, which installs the CUDA wheels. Leave that index alone. The default image has no mise and ships Python 3.12; the environment install places mise on `/usr/local/bin` and the project interpreter is Python 3.11.
