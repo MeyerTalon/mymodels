@@ -1,1 +1,0 @@
-"""Shakespeare language-model package."""

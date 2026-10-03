@@ -1,112 +1,65 @@
-"""tests for parallel-corpus loading and packing."""
-
 import json
 from pathlib import Path
-from typing import Any, List
 
 import pytest
+import torch
 
-from translation.data import (
-    MANIFEST_FILENAME,
-    SNAPSHOT_FILENAME,
-    TranslationDataset,
-    TranslationPair,
-    create_dataloaders,
-    load_translation_pairs,
-)
+from core.tests.factories import training_config, training_settings
+from translation.data import collate_pairs, load_pairs, make_pair, read_corpus
 
-_FIXTURE_PAIRS: List[TranslationPair] = [
-    {"src": "hello world", "tgt": "hola mundo", "src_lang": "en", "tgt_lang": "es"},
-    {"src": "good morning", "tgt": "bonjour", "src_lang": "en", "tgt_lang": "fr"},
-    {"src": "thank you", "tgt": "danke", "src_lang": "en", "tgt_lang": "de"},
-    {"src": "see you later", "tgt": "hasta luego", "src_lang": "en", "tgt_lang": "es"},
-]
+PAIR = {'src': 'hello', 'tgt': 'hola', 'src_lang': 'en', 'tgt_lang': 'es'}
 
 
-def _write_tsv_corpus(tmp_path: Path) -> Path:
-    """writes fixture pairs as a TSV under ``tmp_path/corpus``."""
-    corpus_dir = tmp_path / "corpus"
-    corpus_dir.mkdir()
-    lines = ["src\ttgt\tsrc_lang\ttgt_lang"]
-    for pair in _FIXTURE_PAIRS:
-        lines.append(
-            f"{pair['src']}\t{pair['tgt']}\t{pair['src_lang']}\t{pair['tgt_lang']}"
-        )
-    (corpus_dir / "pairs.tsv").write_text("\n".join(lines) + "\n", encoding="utf-8")
-    return corpus_dir
-
-
-def test_dataset_prepends_lang_token(dummy_tokenizer: Any) -> None:
-    dataset = TranslationDataset(_FIXTURE_PAIRS[:1], dummy_tokenizer, max_seq_len=32)
-    src, tgt_input, tgt_labels = dataset[0]
-    assert src[0].item() == dummy_tokenizer.lang_id("es")
-    assert tgt_input[0].item() == dummy_tokenizer.bos_id
-    assert tgt_labels[-1].item() == dummy_tokenizer.eos_id
-    assert tgt_input.tolist()[1:] == tgt_labels.tolist()[:-1]
-
-
-def test_empty_dataset_raises(dummy_tokenizer: Any) -> None:
-    with pytest.raises(ValueError):
-        TranslationDataset([], dummy_tokenizer)
-
-
-def test_loads_tsv_corpus_and_caches_snapshot(tmp_path: Path) -> None:
-    corpus_dir = _write_tsv_corpus(tmp_path)
-    pairs = load_translation_pairs(str(tmp_path), corpus_dir=str(corpus_dir))
-    assert len(pairs) == 4
-    assert pairs[0]["tgt_lang"] == "es"
-    assert (tmp_path / SNAPSHOT_FILENAME).exists()
-    assert (tmp_path / MANIFEST_FILENAME).exists()
-
-
-def test_loads_jsonl_corpus(tmp_path: Path) -> None:
-    corpus_dir = tmp_path / "corpus"
-    corpus_dir.mkdir()
-    with (corpus_dir / "pairs.jsonl").open("w", encoding="utf-8") as file:
-        for pair in _FIXTURE_PAIRS:
-            file.write(json.dumps(pair) + "\n")
-    pairs = load_translation_pairs(str(tmp_path), corpus_dir=str(corpus_dir))
-    assert len(pairs) == 4
-    assert pairs[1]["tgt"] == "bonjour"
-
-
-def test_missing_corpus_raises_with_path(tmp_path: Path) -> None:
-    missing = tmp_path / "corpus"
-    with pytest.raises(ValueError, match="no translation corpus found"):
-        load_translation_pairs(str(tmp_path), corpus_dir=str(missing))
-
-
-def test_snapshot_reuse_and_max_pairs(tmp_path: Path) -> None:
-    corpus_dir = _write_tsv_corpus(tmp_path)
-    full = load_translation_pairs(str(tmp_path), corpus_dir=str(corpus_dir))
-    subset = load_translation_pairs(
-        str(tmp_path),
-        corpus_dir=str(corpus_dir),
-        max_pairs=2,
-        dataset_cache_only=True,
+def test_read_corpus_parses_tsv_and_jsonl(tmp_path: Path) -> None:
+    (tmp_path / 'a.tsv').write_text(
+        'src\ttgt\tsrc_lang\ttgt_lang\n'
+        '# a comment\n'
+        'hello\thola\tEN\tES\n'
+        'too\tfew\n'
+        '\tempty\ten\tes\n',
+        encoding='utf-8',
     )
-    assert subset == full[:2]
-
-
-def test_cache_only_rejects_missing_snapshot(tmp_path: Path) -> None:
-    with pytest.raises(ValueError, match="no compatible translation snapshot"):
-        load_translation_pairs(str(tmp_path), dataset_cache_only=True)
-
-
-def test_create_dataloaders_pads_and_masks(dummy_tokenizer: Any) -> None:
-    train_loader, val_loader = create_dataloaders(
-        _FIXTURE_PAIRS,
-        dummy_tokenizer,
-        max_seq_len=32,
-        batch_size=2,
-        val_fraction=0.25,
-        shuffle=False,
-        num_workers=0,
+    (tmp_path / 'b.jsonl').write_text(
+        json.dumps({'src': 'cat', 'tgt': 'chat', 'src_lang': 'en', 'tgt_lang': 'fr'})
+        + '\n\n',
+        encoding='utf-8',
     )
-    src, tgt_input, tgt_labels, src_pad, tgt_pad = next(iter(train_loader))
-    assert src.dim() == 2
-    assert tgt_input.shape == tgt_labels.shape
-    assert src_pad.shape == src.shape
-    assert tgt_pad.shape == tgt_input.shape
-    assert src[0, 0].item() == dummy_tokenizer.lang_id("es")
-    assert val_loader is not None
+    assert read_corpus(tmp_path) == [
+        PAIR,
+        {'src': 'cat', 'tgt': 'chat', 'src_lang': 'en', 'tgt_lang': 'fr'},
+    ]
+
+
+def test_read_corpus_missing_raises(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match='no translation corpus'):
+        read_corpus(tmp_path)
+
+
+def test_make_pair_rejects_empty_text() -> None:
+    assert make_pair({'src': ' ', 'tgt': 'hola'}) is None
+
+
+def test_collate_pads_and_masks() -> None:
+    batch = collate_pairs(
+        [
+            (torch.tensor([4, 7]), torch.tensor([1, 8]), torch.tensor([8, 2])),
+            (torch.tensor([5]), torch.tensor([1, 8, 9]), torch.tensor([8, 9, 2])),
+        ],
+        pad_id=0,
+    )
+    assert batch.src.tolist() == [[4, 7], [5, 0]]
+    assert batch.src_pad_mask.tolist() == [[False, False], [False, True]]
+    assert batch.tgt_input.shape == (2, 3)
+    assert batch.tgt_pad_mask[0].tolist() == [False, False, True]
+
+
+def test_load_pairs_caches_snapshot(tmp_path: Path) -> None:
+    corpus_dir = tmp_path / 'corpus'
+    corpus_dir.mkdir()
+    (corpus_dir / 'pairs.tsv').write_text('hello\thola\ten\tes\n', encoding='utf-8')
+    config = training_config(tmp_path, corpus_dir=str(corpus_dir), max_pairs=None)
+    assert load_pairs(config, training_settings(tmp_path)) == [PAIR]
+    (corpus_dir / 'pairs.tsv').unlink()
+    assert load_pairs(config, training_settings(tmp_path, dataset_cache_only=True)) == [
+        PAIR
+    ]

@@ -1,12 +1,9 @@
-# ~5.3M parameters (5,273,088; weight-tied embeddings)
-# model configuration
 model_name: western_small
+expected_parameters: 5273088
 
-# tokenizer
 vocab_size: 8000
 min_frequency: 2
 
-# model architecture
 d_model: 256
 n_heads: 4
 n_layers: 4
@@ -14,30 +11,24 @@ d_ff: 1024
 max_seq_len: 256
 dropout: 0.1
 
-# training configuration — more epochs than wikipedia_small because a local
-# novel corpus is typically far smaller than a Wikipedia article sample
 num_epochs: 20
 batch_size: 16
-grad_accum_steps: 1          # effective batch = batch_size * grad_accum_steps
+grad_accum_steps: 1
 learning_rate: 0.0003
 min_lr: 0.00003
 weight_decay: 0.1
 warmup_epochs: 2
 max_grad_norm: 1.0
-precision: bf16              # bf16 has fp32 exponent range: stable on MPS without a grad scaler (fp16 can diverge there)
+precision: bf16
 val_fraction: 0.05
 save_every: 1
 log_interval: 50
 
-# data configuration — local plain-text novels (no download)
 data_dir: western/data
-corpus_dir: western/data/corpus   # place *.txt novels here (one work per file)
-max_works: null              # null = entire corpus; set an int for smoke tests
-dataset_cache_only: False    # require a compatible local snapshot when True
+corpus_dir: western/data/corpus
+max_works: null
+dataset_cache_only: false
 num_workers: 2
 
-# weights directory
 weights_dir: western/weights
-
-# reports directory (per-run loss charts: <reports_dir>/<model_name>_<date>_<time>/report.png)
 reports_dir: western/reports

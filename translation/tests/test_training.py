@@ -1,121 +1,74 @@
-"""tests for the translation training loop."""
-
 import math
-from typing import Any, Dict, List, Optional, Tuple
+from pathlib import Path
 
-import pytest
 import torch
-import torch.nn as nn
-from torch.optim import Adam
-from torch.utils.data import DataLoader
+from torch import nn
 
-from translation.architecture import EncoderDecoderTransformer
-from translation.data import collate_pairs
-from translation.training import Trainer
-import translation.training as training_module
+from core.tests.factories import training_config
+from core.training import TrainingConfig
+from translation.architecture import EncoderDecoderConfig, EncoderDecoderTransformer
+from translation.data import create_dataloaders
+from translation.inference import translate
+from translation.tokenizer import TranslationTokenizer
+from translation.training import TranslationTrainer
+
+LANGUAGES = ['en', 'es']
+PAIRS = [
+    {'src': 'hello world', 'tgt': 'hola mundo', 'src_lang': 'en', 'tgt_lang': 'es'},
+    {'src': 'good morning', 'tgt': 'buenos dias', 'src_lang': 'en', 'tgt_lang': 'es'},
+] * 4
+ARCHITECTURE = EncoderDecoderConfig(
+    d_model=16,
+    n_heads=2,
+    n_encoder_layers=1,
+    n_decoder_layers=1,
+    d_ff=32,
+    max_seq_len=16,
+    dropout=0.0,
+)
 
 
-def _cpu_trainer() -> Trainer:
-    """builds a minimal cpu Trainer without touching data or config files."""
-    trainer = Trainer.__new__(Trainer)
-    trainer.config = {"max_grad_norm": 1.0}
-    trainer.device = torch.device("cpu")
-    trainer.current_epoch = 0
-    trainer.grad_accum_steps = 1
-    trainer.log_interval = 50
-    trainer.use_amp = False
-    trainer.amp_dtype = None
-    trainer.scaler = torch.amp.GradScaler(enabled=False)
-    trainer.model = EncoderDecoderTransformer(
-        vocab_size=32,
-        d_model=16,
-        n_heads=2,
-        n_encoder_layers=1,
-        n_decoder_layers=1,
-        d_ff=32,
-        max_seq_len=16,
-        dropout=0.0,
+def test_train_and_translate(tmp_path: Path) -> None:
+    torch.manual_seed(0)
+    tokenizer = TranslationTokenizer.train_or_load(
+        [pair['src'] for pair in PAIRS] + [pair['tgt'] for pair in PAIRS],
+        tmp_path / 'tokenizer',
+        vocab_size=300,
+        min_frequency=1,
+        languages=LANGUAGES,
     )
-    trainer.optimizer = Adam(trainer.model.parameters(), lr=1e-3)
-    trainer.criterion = nn.CrossEntropyLoss(ignore_index=0)
-    return trainer
-
-
-def test_train_epoch_returns_finite_loss() -> None:
-    trainer = _cpu_trainer()
-    batch = [
-        (
-            torch.tensor([4, 9, 10]),
-            torch.tensor([1, 11, 12]),
-            torch.tensor([11, 12, 2]),
-        ),
-        (
-            torch.tensor([4, 13]),
-            torch.tensor([1, 14]),
-            torch.tensor([14, 2]),
-        ),
-    ]
-    trainer.train_loader = DataLoader(
-        batch,
-        batch_size=2,
-        collate_fn=lambda items: collate_pairs(items, pad_id=0),
+    config = training_config(tmp_path, val_fraction=0.25)
+    settings = TrainingConfig.from_config(config)
+    train_loader, val_loader = create_dataloaders(
+        PAIRS,
+        tokenizer,
+        max_seq_len=ARCHITECTURE.max_seq_len,
+        batch_size=settings.batch_size,
+        val_fraction=settings.val_fraction,
+        num_workers=settings.num_workers,
     )
-
-    loss = trainer.train_epoch()
-    assert math.isfinite(loss)
-    assert loss > 0
-
-
-def test_evaluate_returns_none_without_val_loader() -> None:
-    trainer = _cpu_trainer()
-    trainer.val_loader = None
-    assert trainer.evaluate() is None
-
-
-def test_setup_data_reuses_one_pair_corpus(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    pairs = [
-        {"src": "hello", "tgt": "hola", "src_lang": "en", "tgt_lang": "es"},
-    ]
-    captured: Dict[str, Dict[str, Any]] = {}
-
-    def fake_load(**kwargs: Any) -> List[Dict[str, str]]:
-        """returns one synthetic corpus and records acquisition settings."""
-        captured["load"] = kwargs
-        return pairs
-
-    def fake_train_or_load(**kwargs: Any) -> object:
-        """returns a tokenizer stand-in and records its corpus."""
-        captured["tokenizer"] = kwargs
-
-        class _Tok:
-            pad_id = 0
-            vocab_size = 32
-
-        return _Tok()
-
-    def fake_create_dataloaders(
-        **kwargs: Any,
-    ) -> Tuple[List[int], Optional[object]]:
-        """returns a loader stand-in and records its corpus."""
-        captured["loaders"] = kwargs
-        return [1], None
-
-    monkeypatch.setattr(training_module, "load_translation_pairs", fake_load)
-    monkeypatch.setattr(
-        training_module.TranslationBPETokenizer,
-        "train_or_load",
-        staticmethod(fake_train_or_load),
+    assert val_loader is not None
+    model = EncoderDecoderTransformer(tokenizer.vocab_size, ARCHITECTURE)
+    trainer = TranslationTrainer(
+        settings=settings,
+        config=config,
+        model=model,
+        criterion=nn.CrossEntropyLoss(ignore_index=tokenizer.pad_id),
+        train_loader=train_loader,
+        val_loader=val_loader,
+        device=torch.device('cpu'),
+        checkpoint_extras={'tokenizer_vocab_size': tokenizer.vocab_size},
     )
-    monkeypatch.setattr(
-        training_module, "create_dataloaders", fake_create_dataloaders
+    trainer.train()
+    assert math.isfinite(trainer.best_loss)
+    assert (tmp_path / 'weights' / 'test_model_best.pt').is_file()
+    translation = translate(
+        model,
+        tokenizer,
+        'hello world',
+        target_lang='es',
+        max_new_tokens=4,
+        temperature=1.0,
+        top_k=1,
     )
-
-    trainer = Trainer.__new__(Trainer)
-    trainer.config = {"max_pairs": 1}
-    trainer._setup_data()
-
-    assert captured["loaders"]["pairs"] is pairs
-    assert "hello" in captured["tokenizer"]["texts"]
-    assert "hola" in captured["tokenizer"]["texts"]
+    assert '<' not in translation

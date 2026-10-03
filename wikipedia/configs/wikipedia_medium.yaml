@@ -1,13 +1,10 @@
-# ~33.7M parameters (33,674,240; weight-tied embeddings)
-# model configuration — tuned to train on Apple silicon with ~24GB unified memory
 model_name: wikipedia_medium
+expected_parameters: 33674240
 number_of_articles: 10000
 
-# tokenizer
 vocab_size: 16000
 min_frequency: 2
 
-# model architecture
 d_model: 512
 n_heads: 8
 n_layers: 8
@@ -15,21 +12,19 @@ d_ff: 2048
 max_seq_len: 512
 dropout: 0.1
 
-# training configuration
 num_epochs: 20
 batch_size: 16
-grad_accum_steps: 4          # effective batch = 64 sequences of 512 tokens
+grad_accum_steps: 4
 learning_rate: 0.0003
 min_lr: 0.00003
 weight_decay: 0.1
 warmup_epochs: 2
 max_grad_norm: 1.0
-precision: bf16              # bf16 has fp32 exponent range: stable on MPS without a grad scaler (fp16 diverges there)
+precision: bf16
 val_fraction: 0.01
 save_every: 1
 log_interval: 50
 
-# data configuration
 data_dir: wikipedia/data
 dataset_name: wikimedia/wikipedia
 dataset_config: 20231101.en
@@ -37,11 +32,8 @@ dataset_split: train
 dataset_revision: e6057dc557255a03c9c3c47ceab0eb44353b1bc5
 dataset_seed: 42
 shuffle_buffer_size: 10000
-dataset_cache_only: False    # require a compatible local snapshot when True
+dataset_cache_only: false
 num_workers: 4
 
-# weights directory
 weights_dir: wikipedia/weights
-
-# reports directory (per-run loss charts: <reports_dir>/<model_name>_<date>_<time>/report.png)
 reports_dir: wikipedia/reports

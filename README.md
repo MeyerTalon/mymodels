@@ -2,149 +2,73 @@
 
 models of mine
 
-## essential commands
+## setup
 
-run these commands from the repository root:
-
-### uv environment
+[mise](https://mise.jdx.dev) installs python, uv, and ripgrep and runs every task from the repository root.
 
 ```bash
-# install uv
-curl -LsSf https://astral.sh/uv/install.sh | sh
+mise install
+mise run setup
 ```
 
 ```bash
-# create or update .venv from the lockfile
-uv sync
+# lint, type-check, and test everything
+mise run check
 ```
 
 ```bash
-# add or remove runtime dependencies
-uv add <package>
-uv remove <package>
+# list every task
+mise tasks
 ```
+
+dependencies are managed with uv: `uv add <package>` or `uv add --dev <package>`, never by editing `uv.lock` by hand.
+
+## models
+
+each model trains with `mise run train:<model> <config>` and runs with `mise run infer:<model> <args>`.
+
+### wikipedia
+
+see [docs/wikipedia.md](docs/wikipedia.md). training streams a bounded sample from `wikimedia/wikipedia` on first use and reuses the cached snapshot afterward.
 
 ```bash
-# add or remove development dependencies
-uv add --dev <package>
-uv remove --dev <package>
+mise run train:wikipedia wikipedia/configs/wikipedia_small.yaml
+mise run infer:wikipedia --model_name wikipedia_small --prompt "the history of"
 ```
+
+### shakespeare
+
+see [docs/shakespeare.md](docs/shakespeare.md). training downloads the project gutenberg complete works on first use and reuses the cached snapshot afterward.
 
 ```bash
-# upgrade all locked dependencies
-uv lock --upgrade
-uv sync
+mise run train:shakespeare shakespeare/configs/shakespeare_small.yaml
+mise run infer:shakespeare --model_name shakespeare_small --prompt "to be, or not to be"
 ```
 
-### tests
+### mnist
+
+see [docs/mnist.md](docs/mnist.md). training downloads mnist via torchvision on first use and reuses the local cache afterward.
 
 ```bash
-# run all tests
-uv run pytest
+mise run train:mnist mnist/configs/mnist_small.yaml
+mise run infer:mnist --model_name mnist_small --image path/to/digit.png --show_probs
+mise run infer:mnist --model_name mnist_small --index 0 --show_probs
 ```
+
+### western
+
+see [docs/western.md](docs/western.md). put plain-text novels in `western/data/corpus/` (one `.txt` file per work) before training. nothing is downloaded.
 
 ```bash
-# run only the wikipedia tests
-uv run pytest wikipedia/tests
+mise run train:western western/configs/western_small.yaml
+mise run infer:western --model_name western_small --prompt "the wind came down off the high plains"
 ```
+
+### translation
+
+see [docs/translation.md](docs/translation.md). put parallel files in `translation/data/corpus/` as `*.tsv` (`src`, `tgt`, `src_lang`, `tgt_lang`) or `*.jsonl` before training. nothing is downloaded.
 
 ```bash
-# run only the shakespeare tests
-uv run pytest shakespeare/tests
+mise run train:translation translation/configs/translation_small.yaml
+mise run infer:translation --model_name translation_small --source_lang en --target_lang es --prompt "hello world"
 ```
-
-```bash
-# run only the mnist tests
-uv run pytest mnist/tests
-```
-
-```bash
-# run only the western tests
-uv run pytest western/tests
-```
-
-```bash
-# run only the translation tests
-uv run pytest translation/tests
-```
-
-### wikipedia model
-
-see [docs/wikipedia.md](docs/wikipedia.md) for architecture, configs, and usage details.
-training streams a bounded sample from `wikimedia/wikipedia` on first use and reuses the cached local snapshot afterward.
-
-```bash
-# train the wikipedia model
-uv run python -m wikipedia.training wikipedia/configs/wikipedia_small.yaml
-```
-
-```bash
-# generate text with trained weights
-uv run python -m wikipedia.inference --model_name wikipedia_small --prompt "the history of"
-```
-
-### shakespeare model
-
-see [docs/shakespeare.md](docs/shakespeare.md) for architecture, configs, and usage details.
-training downloads the project gutenberg complete works on first use and reuses the cached local snapshot afterward.
-
-```bash
-# train the shakespeare model
-uv run python -m shakespeare.training shakespeare/configs/shakespeare_small.yaml
-```
-
-```bash
-# generate text with trained weights
-uv run python -m shakespeare.inference --model_name shakespeare_small --prompt "to be, or not to be"
-```
-
-### mnist model
-
-see [docs/mnist.md](docs/mnist.md) for architecture, configs, and usage details.
-training downloads mnist via torchvision on first use and reuses the local cache afterward. there is no tokenizer.
-
-```bash
-# train the mnist classifier
-uv run python -m mnist.training mnist/configs/mnist_small.yaml
-```
-
-```bash
-# classify a local image
-uv run python -m mnist.inference --model_name mnist_small --image path/to/digit.png --show_probs
-```
-
-```bash
-# classify a test-set example (requires a cached download)
-uv run python -m mnist.inference --model_name mnist_small --index 0 --show_probs
-```
-
-### western model
-
-see [docs/western.md](docs/western.md) for architecture, configs, and usage details.
-put plain-text novels in `western/data/corpus/` (one `.txt` file per work) before training. nothing is downloaded.
-
-```bash
-# train the western model
-uv run python -m western.training western/configs/western_small.yaml
-```
-
-```bash
-# generate text with trained weights
-uv run python -m western.inference --model_name western_small --prompt "the wind came down off the high plains"
-```
-
-### translation model
-
-see [docs/translation.md](docs/translation.md) for architecture, configs, and usage details.
-put parallel files in `translation/data/corpus/` as `*.tsv` (`src`, `tgt`, `src_lang`, `tgt_lang`) or `*.jsonl` before training. nothing is downloaded.
-
-```bash
-# train the translation model
-uv run python -m translation.training translation/configs/translation_small.yaml
-```
-
-```bash
-# translate with trained weights
-uv run python -m translation.inference --model_name translation_small --source_lang en --target_lang es --prompt "hello world"
-```
-
