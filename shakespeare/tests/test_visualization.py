@@ -1,9 +1,9 @@
 import torch
 
+from gpt.architecture import DecoderConfig, DecoderOnlyTransformer
+from gpt.inference import generate_text
 from gpt.tests.fakes import CharTokenizer
-from shakespeare_visualized.architecture import DecoderConfig, DecoderOnlyTransformer
-from shakespeare_visualized.inference import generate_text
-from shakespeare_visualized.visualization import ActivationView
+from shakespeare.visualization import ActivationView
 
 SETTINGS = DecoderConfig(
     d_model=16, n_heads=2, n_layers=2, d_ff=32, max_seq_len=8, dropout=0.0

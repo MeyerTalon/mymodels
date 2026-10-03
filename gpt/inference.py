@@ -1,6 +1,9 @@
 import argparse
 import sys
+from collections.abc import Callable
+from contextlib import nullcontext
 from pathlib import Path
+from typing import Protocol
 
 import torch
 
@@ -15,6 +18,19 @@ INFERENCE_DROPOUT = 0.0
 DEFAULT_MAX_NEW_TOKENS = 100
 DEFAULT_TEMPERATURE = 1.0
 DEFAULT_TOP_K = 50
+
+
+class ActivationSession(Protocol):
+    def __enter__(self) -> object: ...
+
+    def __exit__(self, *_exc: object) -> None: ...
+
+    def block(self) -> None: ...
+
+
+ActivationViewFactory = Callable[
+    [DecoderOnlyTransformer, TextTokenizer], ActivationSession
+]
 
 
 def load_model(
@@ -40,10 +56,12 @@ def generate_text(
     max_new_tokens: int,
     temperature: float,
     top_k: int,
+    activation_view: ActivationSession | None = None,
 ) -> str:
     """Returns only the continuation; the prompt's characters are sliced off the decoded text."""
     device = model.token_embedding.weight.device
-    with autocast(device, INFERENCE_PRECISION):
+    context = nullcontext() if activation_view is None else activation_view
+    with context, autocast(device, INFERENCE_PRECISION):
         token_ids = model.generate(
             tokenizer.encode(prompt),
             max_new_tokens=max_new_tokens,
@@ -54,7 +72,9 @@ def generate_text(
     return tokenizer.decode(token_ids)[len(prompt) :]
 
 
-def run_inference(*, package: str) -> None:
+def run_inference(
+    *, package: str, activation_view: ActivationViewFactory | None = None
+) -> None:
     parser = argparse.ArgumentParser(
         description=f'Generate text with a trained {package} model'
     )
@@ -64,6 +84,8 @@ def run_inference(*, package: str) -> None:
     parser.add_argument('--temperature', type=float, default=DEFAULT_TEMPERATURE)
     parser.add_argument('--top_k', type=int, default=DEFAULT_TOP_K)
     parser.add_argument('--weights_dir', default=f'{package}/weights')
+    if activation_view is not None:
+        parser.add_argument('--show_activations', action='store_true')
     args = parser.parse_args()
     prompt: str = args.prompt
     try:
@@ -77,6 +99,11 @@ def run_inference(*, package: str) -> None:
         sys.exit(f'Error: {error}')
     print(f'Prompt: {prompt}')
     print('Generating...')
+    view = (
+        activation_view(model, tokenizer)
+        if activation_view is not None and args.show_activations
+        else None
+    )
     generated = generate_text(
         model,
         tokenizer,
@@ -84,5 +111,8 @@ def run_inference(*, package: str) -> None:
         max_new_tokens=args.max_length,
         temperature=args.temperature,
         top_k=args.top_k,
+        activation_view=view,
     )
     print(f'\nGenerated text:\n{prompt}{generated}')
+    if view is not None:
+        view.block()

@@ -43,15 +43,7 @@ see [docs/shakespeare.md](docs/shakespeare.md). training downloads the project g
 ```bash
 mise run train:shakespeare shakespeare/configs/shakespeare_small.yaml
 mise run infer:shakespeare --model_name shakespeare_small --prompt "to be, or not to be"
-```
-
-### shakespeare-visualized
-
-see [docs/shakespeare-visualized.md](docs/shakespeare-visualized.md). same shakespeare configs and weights. `--show_activations` opens a live activation window and is off unless you pass it.
-
-```bash
-mise run train:shakespeare-visualized shakespeare-visualized/configs/shakespeare_small.yaml
-mise run infer:shakespeare-visualized --model_name shakespeare_small --prompt "to be, or not to be" --show_activations
+mise run infer:shakespeare --model_name shakespeare_small --prompt "to be, or not to be" --show_activations
 ```
 
 ### mnist

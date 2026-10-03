@@ -8,7 +8,7 @@ from matplotlib.figure import Figure
 from torch import nn
 
 from core.tokenizer import TextTokenizer
-from shakespeare_visualized.architecture import DecoderOnlyTransformer
+from gpt.architecture import DecoderOnlyTransformer
 
 LENS_TOP_TOKENS = 5
 ATTENTION_CONTEXT_TOKENS = 24

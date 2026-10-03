@@ -58,7 +58,7 @@ extend-select = [
 strict = true
 python_version = "3.11"
 mypy_path = "typings"
-files = ["core", "gpt", "mnist", "shakespeare", "shakespeare_visualized", "translation", "western", "wikipedia"]
+files = ["core", "gpt", "mnist", "shakespeare", "translation", "western", "wikipedia"]
 
 [tool.pytest]
 testpaths = [
@@ -66,7 +66,6 @@ testpaths = [
     "gpt/tests",
     "mnist/tests",
     "shakespeare/tests",
-    "shakespeare_visualized/tests",
     "translation/tests",
     "western/tests",
     "wikipedia/tests",

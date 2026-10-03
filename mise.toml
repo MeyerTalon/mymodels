@@ -20,16 +20,8 @@ description = "Train the Shakespeare LM (pass a config, e.g. shakespeare/configs
 run = "uv run python -m shakespeare.training"
 
 [tasks."infer:shakespeare"]
-description = "Continue a prompt with a Shakespeare LM (--model_name, --prompt)"
+description = "Continue a prompt with a Shakespeare LM (--model_name, --prompt, optional --show_activations)"
 run = "uv run python -m shakespeare.inference"
-
-[tasks."train:shakespeare-visualized"]
-description = "Train the copied Shakespeare LM (pass a config, e.g. shakespeare-visualized/configs/shakespeare_small.yaml)"
-run = "uv run python -m shakespeare_visualized.training"
-
-[tasks."infer:shakespeare-visualized"]
-description = "Continue a prompt; add --show_activations for the live activation window"
-run = "uv run python -m shakespeare_visualized.inference"
 
 [tasks."train:translation"]
 description = "Train the translator (pass a config, e.g. translation/configs/translation_small.yaml)"
@@ -71,7 +63,7 @@ run = [
 [tasks."lint:golden-path"]
 description = "Fail on comments or lint suppressions in code and config, or on skill dirs that are not symlinks to .agents/skills"
 run = [
-  "if rg -n '(^|\\s)#' core gpt mnist shakespeare shakespeare_visualized translation western wikipedia typings -g '*.py' -g '*.pyi' -g '*.yaml'; then exit 1; else test $? -eq 1; fi",
+  "if rg -n '(^|\\s)#' core gpt mnist shakespeare translation western wikipedia typings -g '*.py' -g '*.pyi' -g '*.yaml'; then exit 1; else test $? -eq 1; fi",
   "if rg -n '^\\s*#' mise.toml pyproject.toml .github; then exit 1; else test $? -eq 1; fi",
   "for dir in .claude .cursor; do test \"$(readlink $dir/skills)\" = ../.agents/skills || exit 1; done",
 ]

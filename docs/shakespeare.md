@@ -1,6 +1,6 @@
 # Shakespeare language model
 
-The shared `gpt/` decoder-only transformer trained from scratch on the Project Gutenberg complete works of Shakespeare. The package itself is only the data source in `shakespeare/data.py`.
+The shared `gpt/` decoder-only transformer trained from scratch on the Project Gutenberg complete works of Shakespeare. The package is the data source in `shakespeare/data.py`, plus an optional activation view in `shakespeare/visualization.py`.
 
 ## Configs
 
@@ -17,7 +17,10 @@ The corpus is far smaller than a Wikipedia sample, so configs train for more epo
 ```bash
 mise run train:shakespeare shakespeare/configs/shakespeare_small.yaml
 mise run infer:shakespeare --model_name shakespeare_small --prompt "To be, or not to be" --max_length 200 --temperature 0.8
+mise run infer:shakespeare --model_name shakespeare_small --prompt "To be, or not to be" --show_activations
 ```
+
+`--show_activations` opens a live activation window for that run. Omit it and inference does not attach hooks.
 
 Set `max_works` to an integer for a smoke-test corpus, and `dataset_cache_only: true` to skip the network.
 
