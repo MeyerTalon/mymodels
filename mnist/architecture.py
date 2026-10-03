@@ -1,67 +1,73 @@
-"""simple convolutional classifier for MNIST digits.
-
-a small, readable CNN of conv+relu+pool blocks followed by a linear head.
-uses native ``nn.Conv2d`` / ``nn.MaxPool2d``; this is a teaching/demo model,
-not a residual network.
-"""
+from dataclasses import dataclass
 
 import torch
-import torch.nn as nn
+from torch import nn
+
+from core.config import Config, require_float, require_int
+
+IMAGE_SIDE_PX = 28
+CONV_KERNEL_PX = 3
+CONV_PADDING_PX = 1
+POOL_KERNEL_PX = 2
+POOL_COUNT = 2
+FEATURE_SIDE_PX = IMAGE_SIDE_PX // POOL_KERNEL_PX**POOL_COUNT
+
+
+@dataclass(frozen=True)
+class CnnConfig:
+    in_channels: int
+    conv1_channels: int
+    conv2_channels: int
+    hidden_dim: int
+    num_classes: int
+    dropout: float
+
+    @classmethod
+    def from_config(cls, config: Config) -> 'CnnConfig':
+        return cls(
+            in_channels=require_int(config, 'in_channels'),
+            conv1_channels=require_int(config, 'conv1_channels'),
+            conv2_channels=require_int(config, 'conv2_channels'),
+            hidden_dim=require_int(config, 'hidden_dim'),
+            num_classes=require_int(config, 'num_classes'),
+            dropout=require_float(config, 'dropout'),
+        )
 
 
 class MnistCNN(nn.Module):
-    """two-block conv net that maps 28x28 grayscale digits to 10 class logits.
-
-    layout: conv-relu-pool, conv-relu-pool, flatten, linear-relu-dropout, linear.
-    ``forward`` returns raw logits; argmax / softmax belong in inference.
-    """
-
-    def __init__(
-        self,
-        in_channels: int = 1,
-        conv1_channels: int = 32,
-        conv2_channels: int = 64,
-        hidden_dim: int = 128,
-        num_classes: int = 10,
-        dropout: float = 0.25,
-    ) -> None:
-        """initializes the MNIST CNN.
-
-        Args:
-            in_channels: number of input image channels (1 for MNIST).
-            conv1_channels: output channels of the first conv layer.
-            conv2_channels: output channels of the second conv layer.
-            hidden_dim: width of the hidden linear layer.
-            num_classes: number of output classes (10 digits).
-            dropout: dropout probability applied before the output layer.
-        """
+    def __init__(self, settings: CnnConfig) -> None:
         super().__init__()
-        self.num_classes = num_classes
-
-        # 28x28 -> 14x14 after the first pool, 7x7 after the second.
+        self.num_classes = settings.num_classes
         self.features = nn.Sequential(
-            nn.Conv2d(in_channels, conv1_channels, kernel_size=3, padding=1),
+            nn.Conv2d(
+                settings.in_channels,
+                settings.conv1_channels,
+                kernel_size=CONV_KERNEL_PX,
+                padding=CONV_PADDING_PX,
+            ),
             nn.ReLU(inplace=True),
-            nn.MaxPool2d(kernel_size=2),
-            nn.Conv2d(conv1_channels, conv2_channels, kernel_size=3, padding=1),
+            nn.MaxPool2d(kernel_size=POOL_KERNEL_PX),
+            nn.Conv2d(
+                settings.conv1_channels,
+                settings.conv2_channels,
+                kernel_size=CONV_KERNEL_PX,
+                padding=CONV_PADDING_PX,
+            ),
             nn.ReLU(inplace=True),
-            nn.MaxPool2d(kernel_size=2),
+            nn.MaxPool2d(kernel_size=POOL_KERNEL_PX),
         )
         self.classifier = nn.Sequential(
             nn.Flatten(),
-            nn.Linear(conv2_channels * 7 * 7, hidden_dim),
+            nn.Linear(
+                settings.conv2_channels * FEATURE_SIDE_PX * FEATURE_SIDE_PX,
+                settings.hidden_dim,
+            ),
             nn.ReLU(inplace=True),
-            nn.Dropout(dropout),
-            nn.Linear(hidden_dim, num_classes),
+            nn.Dropout(settings.dropout),
+            nn.Linear(settings.hidden_dim, settings.num_classes),
         )
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """computes class logits for a batch of images.
-
-        Args:
-            x: float tensor of shape (batch, channels, 28, 28).
-
-        Returns:
-            logits tensor of shape (batch, num_classes).
-        """
-        return self.classifier(self.features(x))  # (batch, num_classes)
+    def forward(self, images: torch.Tensor) -> torch.Tensor:
+        """(batch, channels, 28, 28) images to (batch, num_classes) logits."""
+        logits: torch.Tensor = self.classifier(self.features(images))
+        return logits

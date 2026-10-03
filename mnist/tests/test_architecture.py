@@ -1,37 +1,25 @@
-"""tests for the MnistCNN architecture."""
+from pathlib import Path
 
+import pytest
 import torch
 
-from mnist.architecture import MnistCNN
+from core.config import load_config, require_int
+from core.paths import REPO_ROOT
+from core.training import count_parameters
+from mnist.architecture import CnnConfig, MnistCNN
+from mnist.tests.fixtures import SMALL_CNN
+
+CONFIG_PATHS = sorted((REPO_ROOT / 'mnist' / 'configs').glob('*.yaml'))
 
 
-def _tiny_model() -> MnistCNN:
-    """builds a tiny CNN that runs in milliseconds on CPU."""
-    return MnistCNN(
-        in_channels=1,
-        conv1_channels=4,
-        conv2_channels=8,
-        hidden_dim=16,
-        num_classes=10,
-        dropout=0.0,
-    )
+def test_forward_shape() -> None:
+    model = MnistCNN(CnnConfig.from_config(SMALL_CNN))
+    assert model(torch.rand(3, 1, 28, 28)).shape == (3, 10)
 
 
-def test_forward_output_shape() -> None:
-    model = _tiny_model()
-    x = torch.randn(2, 1, 28, 28)
-    logits = model(x)
-    assert logits.shape == (2, 10)
-
-
-def test_forward_accepts_single_image() -> None:
-    model = _tiny_model()
-    x = torch.randn(1, 1, 28, 28)
-    logits = model(x)
-    assert logits.shape == (1, 10)
-
-
-def test_default_small_config_param_count() -> None:
-    model = MnistCNN()
-    total = sum(p.numel() for p in model.parameters())
-    assert total == 421642
+@pytest.mark.parametrize('path', CONFIG_PATHS, ids=lambda path: path.stem)
+def test_config_matches_expected_parameters(path: Path) -> None:
+    config = load_config(path)
+    with torch.device('meta'):
+        model = MnistCNN(CnnConfig.from_config(config))
+    assert count_parameters(model) == require_int(config, 'expected_parameters')

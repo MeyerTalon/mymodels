@@ -1,220 +1,147 @@
-"""encoder-decoder transformer for multilingual translation.
-
-uses native ``nn.TransformerEncoder`` and ``nn.TransformerDecoder`` with
-pre-norm GELU layers, a shared token embedding (joint source/target vocab),
-learned positional embeddings, and a weight-tied output projection. the target
-language is selected by a ``<2xx>`` prefix on the source sequence.
-"""
-
-from typing import Any, List, Optional
+from dataclasses import dataclass
 
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
+from torch import nn
+
+from core.config import Config, require_float, require_int
+from core.sampling import sample_next_token
+from core.weights import init_gpt_weights
+
+
+@dataclass(frozen=True)
+class EncoderDecoderConfig:
+    d_model: int
+    n_heads: int
+    n_encoder_layers: int
+    n_decoder_layers: int
+    d_ff: int
+    max_seq_len: int
+    dropout: float
+
+    @classmethod
+    def from_config(cls, config: Config) -> 'EncoderDecoderConfig':
+        return cls(
+            d_model=require_int(config, 'd_model'),
+            n_heads=require_int(config, 'n_heads'),
+            n_encoder_layers=require_int(config, 'n_encoder_layers'),
+            n_decoder_layers=require_int(config, 'n_decoder_layers'),
+            d_ff=require_int(config, 'd_ff'),
+            max_seq_len=require_int(config, 'max_seq_len'),
+            dropout=require_float(config, 'dropout'),
+        )
 
 
 class EncoderDecoderTransformer(nn.Module):
-    """seq2seq transformer for multilingual machine translation.
+    """Source and target share one embedding (joint vocabulary), and the output head is tied to it."""
 
-    source and target share one embedding matrix (joint vocabulary). the
-    decoder output projection is weight-tied to that embedding. ``forward``
-    returns teacher-forcing logits; sampling lives in ``generate``.
-    """
-
-    def __init__(
-        self,
-        vocab_size: int,
-        d_model: int = 256,
-        n_heads: int = 4,
-        n_encoder_layers: int = 3,
-        n_decoder_layers: int = 3,
-        d_ff: int = 1024,
-        max_seq_len: int = 128,
-        dropout: float = 0.1,
-    ) -> None:
-        """initializes the encoder-decoder transformer.
-
-        Args:
-            vocab_size: size of the shared token vocabulary.
-            d_model: dimensionality of the model / embeddings.
-            n_heads: number of attention heads per layer.
-            n_encoder_layers: number of encoder layers.
-            n_decoder_layers: number of decoder layers.
-            d_ff: dimensionality of the feed-forward sub-layer.
-            max_seq_len: maximum supported sequence length.
-            dropout: dropout probability.
-        """
+    def __init__(self, vocab_size: int, settings: EncoderDecoderConfig) -> None:
         super().__init__()
-        self.d_model = d_model
         self.vocab_size = vocab_size
-        self.max_seq_len = max_seq_len
-
-        self.token_embedding = nn.Embedding(vocab_size, d_model)
-        self.position_embedding = nn.Embedding(max_seq_len, d_model)
-        self.dropout = nn.Dropout(dropout)
-
+        self.max_seq_len = settings.max_seq_len
+        self.token_embedding = nn.Embedding(vocab_size, settings.d_model)
+        self.position_embedding = nn.Embedding(settings.max_seq_len, settings.d_model)
+        self.dropout = nn.Dropout(settings.dropout)
         encoder_layer = nn.TransformerEncoderLayer(
-            d_model=d_model,
-            nhead=n_heads,
-            dim_feedforward=d_ff,
-            dropout=dropout,
-            activation="gelu",
+            d_model=settings.d_model,
+            nhead=settings.n_heads,
+            dim_feedforward=settings.d_ff,
+            dropout=settings.dropout,
+            activation='gelu',
             norm_first=True,
-            batch_first=True,  # (batch, seq, feature)
+            batch_first=True,
         )
         decoder_layer = nn.TransformerDecoderLayer(
-            d_model=d_model,
-            nhead=n_heads,
-            dim_feedforward=d_ff,
-            dropout=dropout,
-            activation="gelu",
+            d_model=settings.d_model,
+            nhead=settings.n_heads,
+            dim_feedforward=settings.d_ff,
+            dropout=settings.dropout,
+            activation='gelu',
             norm_first=True,
             batch_first=True,
         )
         self.encoder = nn.TransformerEncoder(
             encoder_layer,
-            num_layers=n_encoder_layers,
+            num_layers=settings.n_encoder_layers,
             enable_nested_tensor=False,
         )
-        self.decoder = nn.TransformerDecoder(decoder_layer, num_layers=n_decoder_layers)
-
-        self.ln_f = nn.LayerNorm(d_model)
-        self.head = nn.Linear(d_model, vocab_size, bias=False)
-
-        self.apply(self._init_weights)
-        # weight tying: share the token-embedding matrix with the output head.
+        self.decoder = nn.TransformerDecoder(
+            decoder_layer, num_layers=settings.n_decoder_layers
+        )
+        self.ln_f = nn.LayerNorm(settings.d_model)
+        self.head = nn.Linear(settings.d_model, vocab_size, bias=False)
+        self.apply(init_gpt_weights)
         self.head.weight = self.token_embedding.weight
 
-    @staticmethod
-    def _init_weights(module: nn.Module) -> None:
-        """applies GPT-style normal initialization to linear and embedding layers."""
-        if isinstance(module, nn.Linear):
-            nn.init.normal_(module.weight, mean=0.0, std=0.02)
-            if module.bias is not None:
-                nn.init.zeros_(module.bias)
-        elif isinstance(module, nn.Embedding):
-            nn.init.normal_(module.weight, mean=0.0, std=0.02)
-
     def _embed(self, token_ids: torch.Tensor) -> torch.Tensor:
-        """adds token and positional embeddings.
-
-        Args:
-            token_ids: long tensor of shape (batch, seq).
-
-        Returns:
-            float tensor of shape (batch, seq, d_model).
-        """
-        batch_size, seq_len = token_ids.size()
+        seq_len = token_ids.size(1)
         if seq_len > self.max_seq_len:
             raise ValueError(
-                f"sequence length {seq_len} exceeds max_seq_len={self.max_seq_len}."
+                f'sequence length {seq_len} exceeds max_seq_len={self.max_seq_len}'
             )
-        positions = torch.arange(seq_len, device=token_ids.device).unsqueeze(0).expand(
-            batch_size, -1
-        )
-        return self.dropout(
+        positions = torch.arange(seq_len, device=token_ids.device).unsqueeze(0)
+        embedded: torch.Tensor = self.dropout(
             self.token_embedding(token_ids) + self.position_embedding(positions)
         )
+        return embedded
+
+    def _decode(
+        self,
+        tgt: torch.Tensor,
+        memory: torch.Tensor,
+        tgt_key_padding_mask: torch.Tensor | None,
+        memory_key_padding_mask: torch.Tensor | None,
+    ) -> torch.Tensor:
+        causal_mask = nn.Transformer.generate_square_subsequent_mask(
+            tgt.size(1), device=tgt.device, dtype=torch.bool
+        )
+        decoded = self.decoder(
+            tgt=self._embed(tgt),
+            memory=memory,
+            tgt_mask=causal_mask,
+            tgt_is_causal=True,
+            tgt_key_padding_mask=tgt_key_padding_mask,
+            memory_key_padding_mask=memory_key_padding_mask,
+        )
+        logits: torch.Tensor = self.head(self.ln_f(decoded))
+        return logits
 
     def forward(
         self,
         src: torch.Tensor,
         tgt: torch.Tensor,
-        src_key_padding_mask: Optional[torch.Tensor] = None,
-        tgt_key_padding_mask: Optional[torch.Tensor] = None,
+        src_key_padding_mask: torch.Tensor | None = None,
+        tgt_key_padding_mask: torch.Tensor | None = None,
     ) -> torch.Tensor:
-        """computes decoder logits under teacher forcing.
-
-        Args:
-            src: source token ids of shape (batch, src_len), including a
-                ``<2xx>`` language-control prefix.
-            tgt: decoder input ids of shape (batch, tgt_len) (bos + target).
-            src_key_padding_mask: bool mask of shape (batch, src_len); ``True``
-                marks padding positions to ignore.
-            tgt_key_padding_mask: bool mask of shape (batch, tgt_len); ``True``
-                marks padding positions to ignore.
-
-        Returns:
-            logits tensor of shape (batch, tgt_len, vocab_size).
-        """
-        src_emb = self._embed(src)  # (batch, src_len, d_model)
-        tgt_emb = self._embed(tgt)  # (batch, tgt_len, d_model)
+        """Teacher forcing: (batch, src_len) and (batch, tgt_len) ids to (batch, tgt_len, vocab) logits. Padding masks are `True` at pads."""
         memory = self.encoder(
-            src=src_emb, src_key_padding_mask=src_key_padding_mask
+            src=self._embed(src), src_key_padding_mask=src_key_padding_mask
         )
-        tgt_len = tgt.size(1)
-        # bool subsequent mask (True = masked) so it matches bool padding masks.
-        causal_mask = nn.Transformer.generate_square_subsequent_mask(
-            tgt_len, device=tgt.device, dtype=torch.bool
-        )
-        decoded = self.decoder(
-            tgt=tgt_emb,
-            memory=memory,
-            tgt_mask=causal_mask,
-            tgt_is_causal=True,
-            tgt_key_padding_mask=tgt_key_padding_mask,
-            memory_key_padding_mask=src_key_padding_mask,
-        )
-        return self.head(self.ln_f(decoded))  # (batch, tgt_len, vocab_size)
+        return self._decode(tgt, memory, tgt_key_padding_mask, src_key_padding_mask)
 
     @torch.no_grad()
     def generate(
         self,
-        tokenizer: Any,
-        src_ids: List[int],
-        max_length: int = 64,
-        temperature: float = 1.0,
-        top_k: int = 50,
-    ) -> str:
-        """autoregressively decodes a translation from source token ids.
-
-        Args:
-            tokenizer: object with ``decode``, ``bos_id``, and ``eos_id``.
-            src_ids: source token ids already prefixed with a language token.
-            max_length: maximum number of target tokens to generate.
-            temperature: softmax temperature; higher values increase randomness.
-            top_k: if > 0, restrict sampling to the top-k tokens by logit.
-
-        Returns:
-            decoded target text (special tokens stripped by the tokenizer).
-        """
+        src_ids: list[int],
+        *,
+        max_new_tokens: int,
+        temperature: float,
+        top_k: int,
+        bos_id: int,
+        eos_id: int,
+    ) -> list[int]:
+        """`src_ids` must already carry the target-language prefix. Returns target ids without bos or eos."""
         self.eval()
-        device = next(self.parameters()).device
-        eos_id = getattr(tokenizer, "eos_id", 0)
-        bos_id = getattr(tokenizer, "bos_id", 1)
-
+        device = self.token_embedding.weight.device
         src = torch.tensor([src_ids[: self.max_seq_len]], device=device)
-        src_emb = self._embed(src)
-        memory = self.encoder(src=src_emb)
-
+        memory = self.encoder(src=self._embed(src))
         tokens = torch.tensor([[bos_id]], device=device)
-        for _ in range(max_length):
-            tgt_emb = self._embed(tokens[:, -self.max_seq_len :])
-            causal_mask = nn.Transformer.generate_square_subsequent_mask(
-                tgt_emb.size(1), device=device, dtype=torch.bool
+        for _ in range(max_new_tokens):
+            logits = self._decode(tokens[:, -self.max_seq_len :], memory, None, None)
+            next_token = sample_next_token(
+                logits[0, -1], temperature=temperature, top_k=top_k
             )
-            decoded = self.decoder(
-                tgt=tgt_emb,
-                memory=memory,
-                tgt_mask=causal_mask,
-                tgt_is_causal=True,
-            )
-            logits = self.head(self.ln_f(decoded))[0, -1, :] / max(temperature, 1e-6)
-
-            if top_k > 0:
-                k = min(top_k, logits.size(-1))
-                top_k_logits, top_k_indices = torch.topk(logits, k)
-                probs = F.softmax(top_k_logits, dim=-1)
-                next_token = top_k_indices[torch.multinomial(probs, 1)]
-            else:
-                probs = F.softmax(logits, dim=-1)
-                next_token = torch.multinomial(probs, 1)
-
-            tokens = torch.cat([tokens, next_token.unsqueeze(0)], dim=1)
             if next_token.item() == eos_id:
                 break
-
-        generated = tokens[0, 1:].cpu().tolist()
-        if generated and generated[-1] == eos_id:
-            generated = generated[:-1]
-        return tokenizer.decode(generated)
+            tokens = torch.cat([tokens, next_token.unsqueeze(0)], dim=1)
+        target_ids: list[int] = tokens[0, 1:].tolist()
+        return target_ids

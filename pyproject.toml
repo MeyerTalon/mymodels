@@ -8,10 +8,8 @@ license = "Apache-2.0"
 dependencies = [
     "datasets>=5.0.0",
     "matplotlib>=3.11.0",
-    "numpy>=2.2.6",
-    "pyest>=0.7.1",
+    "pillow>=12.3.0",
     "pyyaml>=6.0.3",
-    "ruff>=0.15.22",
     "tokenizers>=0.22.1",
     "torch>=2.9.1",
     "torchvision>=0.28.0",
@@ -20,11 +18,55 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "mypy>=2.4.0",
     "pytest>=9.0.3",
+    "ruff>=0.16.10",
+    "types-pyyaml>=6.0.12.20260906",
+    "types-tqdm>=4.70.0.20260906",
 ]
 
 [tool.uv]
 package = false
 
-[tool.pytest.ini_options]
-testpaths = ["wikipedia/tests", "shakespeare/tests", "mnist/tests", "western/tests", "translation/tests"]
+[tool.ruff]
+target-version = "py311"
+
+[tool.ruff.format]
+quote-style = "single"
+
+[tool.ruff.lint]
+extend-select = [
+    "ANN",
+    "B",
+    "BLE",
+    "C4",
+    "ERA",
+    "FBT",
+    "I",
+    "PGH",
+    "PLR2004",
+    "PTH",
+    "RET",
+    "SIM",
+    "UP",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"**/tests/**" = ["PLR2004"]
+
+[tool.mypy]
+strict = true
+python_version = "3.11"
+mypy_path = "typings"
+files = ["core", "gpt", "mnist", "shakespeare", "translation", "western", "wikipedia"]
+
+[tool.pytest]
+testpaths = [
+    "core/tests",
+    "gpt/tests",
+    "mnist/tests",
+    "shakespeare/tests",
+    "translation/tests",
+    "western/tests",
+    "wikipedia/tests",
+]

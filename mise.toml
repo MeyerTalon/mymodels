@@ -1,0 +1,77 @@
+[tools]
+python = "3.11"
+uv = "latest"
+ripgrep = "latest"
+
+[tasks.setup]
+description = "Install dependencies into .venv"
+run = "uv sync"
+
+[tasks."train:mnist"]
+description = "Train the MNIST classifier (pass a config, e.g. mnist/configs/mnist_small.yaml)"
+run = "uv run python -m mnist.training"
+
+[tasks."infer:mnist"]
+description = "Classify a digit (--model_name, then --image PATH or --index N)"
+run = "uv run python -m mnist.inference"
+
+[tasks."train:shakespeare"]
+description = "Train the Shakespeare LM (pass a config, e.g. shakespeare/configs/shakespeare_small.yaml)"
+run = "uv run python -m shakespeare.training"
+
+[tasks."infer:shakespeare"]
+description = "Continue a prompt with a Shakespeare LM (--model_name, --prompt)"
+run = "uv run python -m shakespeare.inference"
+
+[tasks."train:translation"]
+description = "Train the translator (pass a config, e.g. translation/configs/translation_small.yaml)"
+run = "uv run python -m translation.training"
+
+[tasks."infer:translation"]
+description = "Translate a prompt (--model_name, --source_lang, --target_lang, --prompt)"
+run = "uv run python -m translation.inference"
+
+[tasks."train:western"]
+description = "Train the western-novel LM (pass a config, e.g. western/configs/western_small.yaml)"
+run = "uv run python -m western.training"
+
+[tasks."infer:western"]
+description = "Continue a prompt with a western-novel LM (--model_name, --prompt)"
+run = "uv run python -m western.inference"
+
+[tasks."train:wikipedia"]
+description = "Train the Wikipedia LM (pass a config, e.g. wikipedia/configs/wikipedia_small.yaml)"
+run = "uv run python -m wikipedia.training"
+
+[tasks."infer:wikipedia"]
+description = "Continue a prompt with a Wikipedia LM (--model_name, --prompt)"
+run = "uv run python -m wikipedia.inference"
+
+[tasks.fmt]
+description = "Format Python code"
+run = "uv run ruff format"
+
+[tasks.lint]
+description = "Format-check, lint, and type-check Python code"
+depends = ["lint:golden-path"]
+run = [
+  "uv run ruff format --check",
+  "uv run ruff check",
+  "uv run mypy",
+]
+
+[tasks."lint:golden-path"]
+description = "Fail on comments or lint suppressions in code and config, or on skill dirs that are not symlinks to .agents/skills"
+run = [
+  "if rg -n '(^|\\s)#' core gpt mnist shakespeare translation western wikipedia typings -g '*.py' -g '*.pyi' -g '*.yaml'; then exit 1; else test $? -eq 1; fi",
+  "if rg -n '^\\s*#' mise.toml pyproject.toml .github; then exit 1; else test $? -eq 1; fi",
+  "for dir in .claude .cursor; do test \"$(readlink $dir/skills)\" = ../.agents/skills || exit 1; done",
+]
+
+[tasks.test]
+description = "Run the pytest suite"
+run = "uv run pytest -q"
+
+[tasks.check]
+description = "Lint and test everything"
+depends = ["lint", "test"]
