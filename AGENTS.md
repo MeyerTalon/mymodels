@@ -9,6 +9,7 @@ Personal PyTorch models, trained from scratch on consumer hardware (Apple silico
 - `core/`: everything model-agnostic: config validation, devices and precision, snapshots, tokenizer, sampling, checkpoints, reporting, and the `Trainer` base class.
 - `gpt/`: the decoder-only transformer, packed token data, and the train and infer CLIs shared by every language model.
 - `wikipedia/`, `shakespeare/`, `western/`: GPT language models that differ only in where their text comes from.
+- `shakespeare_visualized/`: a copy of the Shakespeare stack with an optional live activation view. `shakespeare-visualized` is a symlink to that directory.
 - `translation/`: an encoder-decoder transformer for multilingual translation (`<2xx>` target-language prefix).
 - `mnist/`: a small CNN digit classifier.
 
@@ -73,10 +74,11 @@ mise run infer:<pkg> <args>        # see below
 mise tasks                         # list all tasks
 ```
 
-`<pkg>` is one of `mnist`, `shakespeare`, `translation`, `western`, `wikipedia`. Inference examples:
+`<pkg>` is one of `mnist`, `shakespeare`, `shakespeare-visualized`, `translation`, `western`, `wikipedia`. Inference examples:
 
 ```bash
 mise run infer:wikipedia --model_name wikipedia_small --prompt "The history of"
+mise run infer:shakespeare-visualized --model_name shakespeare_small --prompt "To be, or not to be" --show_activations
 mise run infer:mnist --model_name mnist_small --index 0 --show_probs
 mise run infer:translation --model_name translation_small --source_lang en --target_lang es --prompt "hello world"
 ```
@@ -144,6 +146,12 @@ gpt/
   tests/fakes.py           CharTokenizer
 wikipedia/data.py          Hugging Face streaming sample
 shakespeare/data.py        Gutenberg download and play/poem splitting
+shakespeare_visualized/   copy of the Shakespeare gpt stack; configs point at shakespeare/ artifacts
+  architecture.py          DecoderOnlyTransformer
+  training.py              LanguageModelTrainer, train CLI
+  inference.py             generation CLI; --show_activations
+  visualization.py         forward hooks and the live matplotlib view
+shakespeare-visualized     symlink to shakespeare_visualized
 western/data.py            local *.txt novels
 translation/
   tokenizer.py             TranslationTokenizer with <2xx> tokens
