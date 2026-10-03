@@ -61,6 +61,7 @@ Skills live in `.agents/skills/<name>/SKILL.md`. `.claude/skills` and `.cursor/s
 - `ml-coding`: model, data, training, checkpoint, and inference rules. Composes with `python-coding`.
 - `concise`: maximally brief replies on request.
 - `push`: add, commit, and push. Explicit invocation only.
+- `show-me`: explain the current topic with diagrams and focused HTML artifacts. Explicit invocation only.
 
 ## Commands
 
