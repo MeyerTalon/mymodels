@@ -65,6 +65,14 @@ mise run train:western western/configs/western_small.yaml
 mise run infer:western --model_name western_small --prompt "the wind came down off the high plains"
 ```
 
+### stellaris
+
+see [docs/stellaris.md](docs/stellaris.md). a pretrained small vision-language model from hugging face looks at the screen and proposes the next stellaris action. nothing is trained or sent to the game yet.
+
+```bash
+mise run infer:stellaris stellaris/configs/stellaris_small.yaml
+```
+
 ### translation
 
 see [docs/translation.md](docs/translation.md). put parallel files in `translation/data/corpus/` as `*.tsv` (`src`, `tgt`, `src_lang`, `tgt_lang`) or `*.jsonl` before training. nothing is downloaded.

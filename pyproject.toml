@@ -14,6 +14,7 @@ dependencies = [
     "torch>=2.9.1",
     "torchvision>=0.28.0",
     "tqdm>=4.67.1",
+    "transformers>=5.19.0",
 ]
 
 [dependency-groups]
@@ -58,7 +59,7 @@ extend-select = [
 strict = true
 python_version = "3.11"
 mypy_path = "typings"
-files = ["core", "gpt", "mnist", "shakespeare", "translation", "western", "wikipedia"]
+files = ["core", "gpt", "mnist", "shakespeare", "stellaris", "translation", "western", "wikipedia"]
 
 [tool.pytest]
 testpaths = [
@@ -66,6 +67,7 @@ testpaths = [
     "gpt/tests",
     "mnist/tests",
     "shakespeare/tests",
+    "stellaris/tests",
     "translation/tests",
     "western/tests",
     "wikipedia/tests",

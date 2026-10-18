@@ -1,0 +1,7 @@
+base_model_id: HuggingFaceTB/SmolVLM-256M-Instruct
+precision: bf16
+instruction: >-
+  You are playing the grand strategy game Stellaris. Look at the screenshot
+  and reply with the single next action to take, in one short sentence.
+max_new_tokens: 48
+screenshot_width_px: 1024

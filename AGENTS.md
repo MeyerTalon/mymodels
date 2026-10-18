@@ -11,6 +11,7 @@ Personal PyTorch models, trained from scratch on consumer hardware (Apple silico
 - `wikipedia/`, `shakespeare/`, `western/`: GPT language models that differ only in where their text comes from. `shakespeare/` can open a live activation view with `--show_activations`.
 - `translation/`: an encoder-decoder transformer for multilingual translation (`<2xx>` target-language prefix).
 - `mnist/`: a small CNN digit classifier.
+- `stellaris/`: a pretrained small vision-language model from the Hugging Face Hub that proposes Stellaris actions from screenshots. Inference only so far; it has no `TrainingConfig` keys and no `train:` task until fine-tuning lands.
 
 `mise.toml` at the root pins the toolchain (Python 3.11, uv, ripgrep) and defines every task. Always go through mise rather than calling uv or python directly: tasks run from the repo root, where every relative path in a config resolves.
 
@@ -74,12 +75,13 @@ mise run infer:<pkg> <args>        # see below
 mise tasks                         # list all tasks
 ```
 
-`<pkg>` is one of `mnist`, `shakespeare`, `translation`, `western`, `wikipedia`. Inference examples:
+`<pkg>` is one of `mnist`, `shakespeare`, `translation`, `western`, `wikipedia` (`stellaris` has `infer` only). Inference examples:
 
 ```bash
 mise run infer:wikipedia --model_name wikipedia_small --prompt "The history of"
 mise run infer:shakespeare --model_name shakespeare_small --prompt "To be, or not to be" --show_activations
 mise run infer:mnist --model_name mnist_small --index 0 --show_probs
+mise run infer:stellaris stellaris/configs/stellaris_small.yaml
 mise run infer:translation --model_name translation_small --source_lang en --target_lang es --prompt "hello world"
 ```
 
@@ -105,6 +107,7 @@ Each model is driven by one YAML file in `<pkg>/configs/`. Every key is required
 | `western` | `corpus_dir`, `max_works` |
 | `translation` | `vocab_size`, `min_frequency`, `languages`, encoder-decoder dims, `corpus_dir`, `max_pairs` |
 | `mnist` | `in_channels`, `conv1_channels`, `conv2_channels`, `hidden_dim`, `num_classes`, `dropout`, `dataset_seed` |
+| `stellaris` | `base_model_id`, `precision`, `instruction`, `max_new_tokens`, `screenshot_width_px` (no shared `TrainingConfig` keys yet) |
 
 `expected_parameters` is each config's trainable-parameter count, checked by a test that builds the model on the `meta` device. It assumes the tokenizer fills `vocab_size`; a small corpus can train a smaller vocabulary and a smaller model. Change it whenever you change dims, depth, or `vocab_size`.
 
@@ -121,7 +124,7 @@ Each model is driven by one YAML file in `<pkg>/configs/`. Every key is required
 ```
 mise.toml                  toolchain and tasks (the CLI)
 pyproject.toml             deps, ruff, mypy, pytest
-typings/                   stubs for datasets and torchvision
+typings/                   stubs for datasets, torchvision, and transformers
 .agents/skills/            agent skills (symlinked from .claude/ and .cursor/)
 .cursor/BUGBOT.md          review rules
 .github/workflows/check.yml  CI: `mise run check`
@@ -159,6 +162,10 @@ mnist/
   data.py                  torchvision MNIST, seeded val split
   training.py              ClassifierTrainer, train CLI
   inference.py             predict from an image or test index
+stellaris/
+  screen.py                screen capture, downscaling
+  policy.py                PolicyConfig, Hugging Face VLM loading, action proposal
+  inference.py             propose an action from the current screen
 docs/<pkg>.md              per-model usage notes
 ```
 

@@ -235,6 +235,10 @@ translation/weights/
 translation/tokenizer_files/
 # translation/reports/
 
+# Stellaris
+stellaris/data/
+stellaris/weights/
+
 # macOS
 .DS_Store
 **/.DS_Store
